@@ -12,7 +12,8 @@
     "start": "node src/server.js",
     "ingest": "node src/ingest.js",
     "lyrics": "node src/lyrics.js",
-    "setup": "node src/ingest.js && node src/lyrics.js"
+    "setup": "node src/ingest.js && node src/lyrics.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@lyricsearch/core": "*",

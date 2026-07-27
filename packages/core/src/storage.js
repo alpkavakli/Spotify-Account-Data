@@ -11,6 +11,14 @@
 // Grouped by concern (Interface Segregation): ingest / search+read / lyrics /
 // spotify-auth / lifecycle. The base class methods throw so a partial
 // implementation fails loudly instead of silently misbehaving.
+//
+// EVERY METHOD IS ASYNC, and callers must await. node:sqlite is synchronous and
+// SqliteAdapter could return values directly — but `pg` is Promise-based, so a
+// synchronous contract is simply unimplementable on Postgres. One async contract
+// is what keeps the two adapters interchangeable (Liskov) and lets `core` and the
+// routes stay identical across editions. The cost on SQLite is one already-
+// resolved promise per call; the alternative is two contracts and two hosts that
+// drift apart. See docs/05-PHASE-1-SAAS.md, Step 2.
 
 /**
  * @typedef {object} SongInput  Canonical song produced by core.ingest.buildSongs
@@ -50,47 +58,47 @@ class StorageAdapter {
   // ── ingest ──
   /** Insert/merge canonical songs. MUST be atomic (all-or-nothing).
    *  @param {SongInput[]} songs @returns {{inserted:number}} */
-  upsertSongs(songs) { throw new Error("StorageAdapter.upsertSongs not implemented"); }
+  async upsertSongs(songs) { throw new Error("StorageAdapter.upsertSongs not implemented"); }
 
   // ── search & read ──
   /** @param {string} ftsQuery @returns {SearchRow[]} (may throw on invalid FTS) */
-  searchByLyrics(ftsQuery) { throw new Error("StorageAdapter.searchByLyrics not implemented"); }
+  async searchByLyrics(ftsQuery) { throw new Error("StorageAdapter.searchByLyrics not implemented"); }
   /** @param {number} id @returns {object|null} full song + lyric status/body */
-  getSong(id) { throw new Error("StorageAdapter.getSong not implemented"); }
+  async getSong(id) { throw new Error("StorageAdapter.getSong not implemented"); }
   /** @param {number[]} ids @returns {{id:number,artist:string,track:string,uri:string|null}[]} */
-  getSongsByIds(ids) { throw new Error("StorageAdapter.getSongsByIds not implemented"); }
+  async getSongsByIds(ids) { throw new Error("StorageAdapter.getSongsByIds not implemented"); }
   /** @returns {{totals:object, topSongs:object[], topArtists:object[]}} */
-  getStats() { throw new Error("StorageAdapter.getStats not implemented"); }
+  async getStats() { throw new Error("StorageAdapter.getStats not implemented"); }
   /** @returns {{tracks:number, statuses:{status:string,count:number}[]}} */
-  getStatus() { throw new Error("StorageAdapter.getStatus not implemented"); }
+  async getStatus() { throw new Error("StorageAdapter.getStatus not implemented"); }
   /** @returns {number} count of lyrics with status 'ok' (top-words cache key) */
-  getOkLyricCount() { throw new Error("StorageAdapter.getOkLyricCount not implemented"); }
+  async getOkLyricCount() { throw new Error("StorageAdapter.getOkLyricCount not implemented"); }
   /** @returns {{body:string, play_count:number}[]} ok-status lyric bodies */
-  getOkLyricBodies() { throw new Error("StorageAdapter.getOkLyricBodies not implemented"); }
+  async getOkLyricBodies() { throw new Error("StorageAdapter.getOkLyricBodies not implemented"); }
 
   // ── lyrics ──
   /** @param {{retryErrors?:boolean}} opts
    *  @returns {{id:number,artist:string,track:string}[]} songs missing lyrics */
-  getSongsNeedingLyrics(opts) { throw new Error("StorageAdapter.getSongsNeedingLyrics not implemented"); }
+  async getSongsNeedingLyrics(opts) { throw new Error("StorageAdapter.getSongsNeedingLyrics not implemented"); }
   /** Persist a lyric result and keep the search index in sync.
    *  @param {number} songId @param {LyricResult} result */
-  saveLyrics(songId, result) { throw new Error("StorageAdapter.saveLyrics not implemented"); }
+  async saveLyrics(songId, result) { throw new Error("StorageAdapter.saveLyrics not implemented"); }
   /** @returns {{status:string,count:number}[]} */
-  getLyricStatusCounts() { throw new Error("StorageAdapter.getLyricStatusCounts not implemented"); }
+  async getLyricStatusCounts() { throw new Error("StorageAdapter.getLyricStatusCounts not implemented"); }
 
   // ── spotify auth (single-user here; per-user in the SaaS) ──
   /** @returns {object|null} the stored auth row */
-  getAuth() { throw new Error("StorageAdapter.getAuth not implemented"); }
+  async getAuth() { throw new Error("StorageAdapter.getAuth not implemented"); }
   /** @param {{access_token:string, refresh_token:string|null, expires_at:number}} tokens */
-  saveTokens(tokens) { throw new Error("StorageAdapter.saveTokens not implemented"); }
+  async saveTokens(tokens) { throw new Error("StorageAdapter.saveTokens not implemented"); }
   /** @param {{user_id:string, display_name:string}} identity */
-  setAuthUser(identity) { throw new Error("StorageAdapter.setAuthUser not implemented"); }
-  clearAuth() { throw new Error("StorageAdapter.clearAuth not implemented"); }
+  async setAuthUser(identity) { throw new Error("StorageAdapter.setAuthUser not implemented"); }
+  async clearAuth() { throw new Error("StorageAdapter.clearAuth not implemented"); }
   /** Cache a resolved Spotify URI back onto a song. @param {number} songId @param {string} uri */
-  setSongUri(songId, uri) { throw new Error("StorageAdapter.setSongUri not implemented"); }
+  async setSongUri(songId, uri) { throw new Error("StorageAdapter.setSongUri not implemented"); }
 
   // ── lifecycle ──
-  close() { throw new Error("StorageAdapter.close not implemented"); }
+  async close() { throw new Error("StorageAdapter.close not implemented"); }
 }
 
 module.exports = { StorageAdapter };

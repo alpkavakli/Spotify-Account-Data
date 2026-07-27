@@ -8,10 +8,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function processOne(row) {
   try {
     const { status, source, body } = await fetchLyrics(row.artist, row.track);
-    store.saveLyrics(row.id, { status, source, body });
+    await store.saveLyrics(row.id, { status, source, body });
     return status;
   } catch (err) {
-    store.saveLyrics(row.id, {
+    await store.saveLyrics(row.id, {
       status: "error",
       source: String(err.message || err).slice(0, 200),
       body: null,
@@ -22,11 +22,11 @@ async function processOne(row) {
 
 async function main() {
   const retryErrors = process.argv.includes("--retry-errors");
-  const pending = store.getSongsNeedingLyrics({ retryErrors });
+  const pending = await store.getSongsNeedingLyrics({ retryErrors });
 
   if (pending.length === 0) {
     console.log("nothing to fetch — all tracks processed");
-    printStats();
+    await printStats();
     return;
   }
   console.log(`fetching lyrics for ${pending.length} tracks...`);
@@ -53,11 +53,11 @@ async function main() {
 
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   console.log("done.");
-  printStats();
+  await printStats();
 }
 
-function printStats() {
-  const rows = store.getLyricStatusCounts();
+async function printStats() {
+  const rows = await store.getLyricStatusCounts();
   console.log("lyrics status:", rows.map((r) => `${r.status}=${r.count}`).join("  "));
 }
 

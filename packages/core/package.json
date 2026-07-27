@@ -12,9 +12,15 @@
     "./lyrics": "./src/lyrics.js",
     "./search": "./src/search.js",
     "./storage": "./src/storage.js",
-    "./spotify": "./src/spotify.js"
+    "./spotify": "./src/spotify.js",
+    "./testing/fixtures": "./testing/fixtures.js",
+    "./testing/adapter-conformance": "./testing/adapter-conformance.js"
   },
   "files": [
-    "src"
-  ]
+    "src",
+    "testing"
+  ],
+  "scripts": {
+    "test": "node --test"
+  }
 }

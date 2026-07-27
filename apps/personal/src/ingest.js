@@ -31,8 +31,12 @@ if (playlists?.playlists) {
 }
 console.log(`history: ${stats.plays} plays`);
 
-// --- Write to db (adapter owns the transaction — Atomicity) ---
-store.upsertSongs(songs);
+async function main() {
+  // --- Write to db (adapter owns the transaction — Atomicity) ---
+  await store.upsertSongs(songs);
 
-const total = store.getStatus().tracks;
-console.log(`done: ${songs.length} unique songs ingested, ${total} rows in db`);
+  const total = (await store.getStatus()).tracks;
+  console.log(`done: ${songs.length} unique songs ingested, ${total} rows in db`);
+}
+
+main();

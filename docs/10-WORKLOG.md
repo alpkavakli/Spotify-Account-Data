@@ -282,3 +282,154 @@ suite 12/12; live lyrics + Spotify-client unit checks green. Only the Spotify OA
 
 **Next: Phase 1** — SaaS core on Postgres (multi-tenant): a `PostgresAdapter`
 implementing the same `StorageAdapter`, upload intake, accounts. No `core` changes.
+
+---
+
+## 2026-07-27 — Phase 1, Step 1: test suite + a testable Express app ✅
+
+**Why:** the repo had **zero committed tests** (Phase 0's "adapter suite 12/12" was a
+throwaway scratchpad script). Phase 1 adds a second storage backend, a second host and
+a job queue — building that on an untested base means every future change is verified
+by hand, forever. The user also asked to be shown how Express testing works rather than
+being handed tests to maintain blind, so `docs/04-TESTING.md` is written as a guide.
+
+**Decisions taken this step** (see the questions asked at the top of the Phase 1 chat):
+1. **Convert `StorageAdapter` to async** (Step 2) — `pg` is Promise-based, so a
+   synchronous contract cannot be implemented by Postgres and Liskov breaks on day one.
+2. **Tests before Postgres** — build the safety net first, then change things under it.
+3. **Uploads to a local disk volume** behind a `BlobStore` seam (S3/R2 later is a new
+   class, not a rewrite).
+
+### What we did
+
+**Made the app testable — `apps/personal/src/app.js` (new).**
+`server.js` did everything at import time: `require("./store")` opened the real
+`Data/spotify.db`, and `app.listen()` bound port 3000. A test could not import it at
+all. Extracted `createApp({ store, spotify })`, which builds nothing at import time;
+`server.js` is now composition + listen, ~20 lines. Same Dependency-Inversion move as
+`StorageAdapter`, one level up — and the seam `apps/web` will reuse.
+
+*Latent bug fixed on the way:* the `/topWords` cache was a module-level `let`, shared by
+every app in the process. Harmless single-user; a cross-tenant data leak the moment the
+SaaS has more than one user. It now lives inside the factory closure.
+
+**The conformance suite — `packages/core/testing/adapter-conformance.js` (new).**
+The executable form of the `StorageAdapter` contract, exported as
+`@lyricsearch/core/testing/adapter-conformance`. One call runs ~45 tests over merge
+semantics, transaction atomicity, search ordering + stemming, snippet markers, index
+cleanup when lyrics stop being `ok`, return **types**, and the auth lifecycle.
+`PostgresAdapter` will get the same one-line call in Step 4 — that is what turns the
+Liskov commitment in `01-DECISIONS.md` from a promise into a test.
+
+Deliberately asserts value *types*, not just values: `node-postgres` returns `COUNT(*)`
+as a **string** by default and the routes do arithmetic on those fields, so
+`typeof totals.plays === "number"` is a real portability constraint, pre-registered.
+
+Shared fixtures in `packages/core/testing/fixtures.js`: six songs covering
+ok / instrumental / notfound / never-fetched, a plural-only lyric body (proves
+stemming), and a song with no "door" (proves exclusion). Lyric bodies are **invented
+for this repo** — no real lyrics in fixtures.
+
+**Tests written (210 total, whole suite < 5 s, zero new dependencies — Node 24's
+built-in `node:test`):**
+
+| File | Tests | Covers |
+|------|-------|--------|
+| `core/test/matching.test.js` | 16 | normalize / cleanTitle / matchKey — accents, punctuation, non-Latin, remaster suffixes, the never-empty-title rule |
+| `core/test/search.test.js` | 26 | toFtsQuery (operator + quote neutralisation), countOccurrences (stemming, regex-metachar safety), aggregateTopWords |
+| `core/test/ingest.test.js` | 17 | the three-source merge, spelling-variant collapse, keep-first album/uri, malformed-row tolerance |
+| `core/test/lyrics.test.js` | 24 | LRCLIB client with `fetch` mocked: 404-as-empty, 429/503/network retry, retry exhaustion, fail-fast on 4xx, pickBest scoring, all four statuses |
+| `core/test/spotify.test.js` | 27 | exact request shapes (Basic auth, form bodies, scopes), 401→NO_AUTH, 429 Retry-After, 204→null, pickMatch threshold, 100-URI batching |
+| `personal/test/sqlite-adapter.test.js` | 51 | the conformance suite + SQLite-specific: WAL mode, FK enforcement, FTS syntax errors, read-only mode |
+| `personal/test/routes.test.js` | 44 | all 10 HTTP routes end-to-end, real server + real SQLite |
+
+**Express testing technique** (the thing the user asked to be taught): `app.listen(0)`
+binds a real server to a random free port, so tests make real HTTP requests through the
+full stack — no `req`/`res` mocking. `test/helpers/http.js` is that in ~40 lines using
+Node's built-in `fetch` (what supertest does, not worth a dependency).
+`redirect: "manual"` is essential: `/login` 302s to `accounts.spotify.com`, and a
+following client would fire real requests at Spotify from the test suite.
+`test/helpers/fake-spotify.js` records calls and lets any method be overridden, which is
+how `/createPlaylist` gets all seven outcomes (200 / 200-with-missing / 400×3 / 401×2 /
+422 / 502) covered with no Spotify account.
+`test/helpers/temp-store.js` guarantees no test can ever open the real `Data/spotify.db`.
+
+### Two things the tests found immediately
+
+1. **`core/lyrics.js` `pickBest` comment was wrong.** It said "require at least a
+   partial match on both fields", but the threshold is `>= 4`, so *one exact field
+   alone* passes. That turns out to be correct and necessary — `fetchLyrics` retries
+   with an artist-less search, whose results can never match on artist, so a stricter
+   rule would make the fallback dead code. Behavior unchanged; **comment corrected** to
+   state the real rule and contrast it with `spotify.pickMatch` (`>= 6`).
+2. **SQLite only parses an FTS match expression once the index has rows.** With an
+   empty `lyrics_fts`, `"unterminated`, `AND` and `(unbalanced` all return zero rows
+   instead of raising. The first version of that test asserted a throw on an empty
+   store and failed. Documented in the test — it matters because the `/searchForWord`
+   400-handler looks dead until the DB has content.
+
+### Verification
+
+- `npm test` from the repo root: **210 pass, 0 fail** (core 110, personal 100).
+- Real server re-checked against the Phase 0 Step-1 baseline on the real
+  `spotify.db`: `/status` `4044/4044` `ok=3714 instrumental=144 notfound=186`,
+  `/searchForWord?q=door` **154** results, `/stats` `4044 tracks / 1692 artists /
+  22013 plays / 1035 hours`, `/topWords` `know(1198) like(1166) love(1033)`,
+  `/me` `configured:false`. **All identical** — the `createApp` split changed nothing.
+
+**Result:** ✅ safety net in place before anything moves. `docs/04-TESTING.md` documents
+the three layers, the Express technique, and the rules for adding tests.
+
+**Next: Phase 1, Step 2** — convert the `StorageAdapter` contract to async so Postgres
+can implement it. The suite above is what proves that conversion changes no behavior.
+
+---
+
+## 2026-07-27 — Phase 1, Step 2: async `StorageAdapter` contract ✅
+
+**Why:** `node:sqlite` is synchronous, so the Phase 0 contract was synchronous. `pg` is
+Promise-based — a `PostgresAdapter` **cannot** implement a synchronous contract. Left
+alone, Phase 1 would have needed either two contracts (and two route layers that drift
+apart, undoing Phase 0) or a pointless async wrapper class. Converting the one contract
+is the only option that keeps `SqliteAdapter` and `PostgresAdapter` interchangeable.
+
+Decided in the Phase 1 opening questions; done **second**, so the Step-1 suite is
+already in place to prove it changes nothing.
+
+**What we did:**
+- **`packages/core/src/storage.js`** — all 17 contract methods are now `async`. Header
+  documents *why* the cost (one already-resolved promise per SQLite call) is worth it.
+- **`apps/personal/src/sqlite-adapter.js`** — all 17 methods marked `async`. The bodies
+  are untouched: node:sqlite still runs inline, so there is no thread hop and no added
+  latency, only the shape callers need in order to be able to hold a Postgres adapter.
+- **`apps/personal/src/app.js`** — the six read routes and `/me`, `/logout`,
+  `/createPlaylist` became `async` handlers; every store call is awaited. `topWords()`
+  is async. (`/searchForWord`'s `try/catch` now wraps an `await`, which is what keeps
+  its 400-on-bad-query behavior.)
+- **`apps/personal/src/spotify.js`** — `session()` and `logout()` are async;
+  `saveTokens`/`setAuthUser`/`clearAuth`/`setSongUri` awaited.
+- **CLIs** — `ingest.js` gained an async `main()`; `lyrics.js` awaits `saveLyrics`,
+  `getSongsNeedingLyrics` and `printStats`.
+- **Tests** — `fake-spotify` matches the new async `session()`/`logout()`; the FTS
+  syntax-error test moved from `assert.throws` to `assert.rejects`. **The conformance
+  suite needed no changes at all** — it was written `await`-everywhere from the start
+  precisely so it would hold across this conversion.
+
+**Verification — nothing changed:**
+1. **`npm test`: 210 pass, 0 fail** (core 110, personal 100) — same suite, unmodified
+   assertions, before and after.
+2. **All 8 read endpoints on the real `spotify.db`, identical to the Phase 0 baseline:**
+   `/status` `4044/4044 ok=3714 instrumental=144 notfound=186`; `/searchForWord?q=door`
+   **154**; `/stats` `4044 / 1692 / 22013 / 1035h`; `/topWords` `know(1198) like(1166)
+   love(1033)`; `/song/676` unchanged; `/me` `configured:false`; `/login` **503**;
+   `/createPlaylist` **401 "not logged in"**; `/logout` `{ok:true}`.
+3. **Ingest CLI** — re-ingested the real export into a temp DB: `4044` rows, `tracks`
+   table **byte-identical** to the real database (all 9 columns, ordered by `match_key`).
+4. **Lyrics CLI** — `nothing to fetch — all tracks processed`,
+   `instrumental=144 notfound=186 ok=3714`.
+
+**Result:** ✅ one async contract, both hosts on it, zero behavior change. The
+`StorageAdapter` seam is now genuinely implementable by Postgres.
+
+**Next: Phase 1, Step 3** — Postgres schema + migrations (global `songs`/`lyrics`,
+per-user `user_songs`, `users`, `sessions`), runnable from docker-compose.

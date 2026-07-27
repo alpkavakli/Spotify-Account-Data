@@ -43,9 +43,9 @@ function authorizeUrl(state) {
   });
 }
 
-function saveTokens(tok, existingRefresh) {
+async function saveTokens(tok, existingRefresh) {
   const expiresAt = Date.now() + (tok.expires_in || 3600) * 1000;
-  store.saveTokens({
+  await store.saveTokens({
     access_token: tok.access_token,
     refresh_token: tok.refresh_token || existingRefresh || null,
     expires_at: expiresAt,
@@ -60,19 +60,19 @@ async function exchangeCode(code) {
     redirectUri: REDIRECT_URI,
     code,
   });
-  saveTokens(tok);
+  await saveTokens(tok);
   const me = await spotify.getMe(tok.access_token);
-  store.setAuthUser({ user_id: me.id, display_name: me.display_name || me.id });
+  await store.setAuthUser({ user_id: me.id, display_name: me.display_name || me.id });
   return me;
 }
 
-function session() {
+async function session() {
   return store.getAuth();
 }
 
 /** Returns a valid access token, refreshing 60s before expiry. */
 async function accessToken() {
-  const row = session();
+  const row = await session();
   if (!row || !row.access_token) {
     const err = new Error("not logged in");
     err.code = "NO_AUTH";
@@ -91,12 +91,12 @@ async function accessToken() {
     clientSecret: secret,
     refreshToken: row.refresh_token,
   });
-  saveTokens(tok, row.refresh_token);
+  await saveTokens(tok, row.refresh_token);
   return tok.access_token;
 }
 
-function logout() {
-  store.clearAuth();
+async function logout() {
+  await store.clearAuth();
 }
 
 /**
@@ -111,13 +111,13 @@ async function resolveUri(track) {
     artist: track.artist,
     track: track.track,
   });
-  if (uri) store.setSongUri(track.id, uri);
+  if (uri) await store.setSongUri(track.id, uri);
   return uri;
 }
 
 async function createPlaylist(name, isPublic, description) {
   const token = await accessToken();
-  const row = session();
+  const row = await session();
   return spotify.createPlaylist(token, row.user_id, { name, isPublic, description });
 }
 

@@ -13,6 +13,7 @@
     "apps/*"
   ],
   "scripts": {
+    "test": "npm test --workspaces --if-present",
     "start": "npm start --workspace @lyricsearch/personal",
     "ingest": "npm run ingest --workspace @lyricsearch/personal",
     "lyrics": "npm run lyrics --workspace @lyricsearch/personal",

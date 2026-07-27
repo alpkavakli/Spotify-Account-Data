@@ -11,10 +11,12 @@ without re-deriving anything.
 | — | [PROJECT_PLAN.md](PROJECT_PLAN.md) | The master vision brief: what the product is, the two-track plan, legal map, data model, phased roadmap. Read this first for the "why". |
 | 01 | [01-DECISIONS.md](01-DECISIONS.md) | Resolved decisions (repo strategy, auth, frontend, hosting, search, queue) and the engineering principles we hold to (SOLID, ACID). |
 | 02 | [02-SCALABILITY.md](02-SCALABILITY.md) | The scaling ladder, why NOT Kubernetes (yet), and the concrete tech stack with add-it-when triggers. |
-| 03 | [03-PHASE-0-REFACTOR.md](03-PHASE-0-REFACTOR.md) | The plan for extracting the shared `core` package and the `StorageAdapter` interface. The current active phase. |
+| 03 | [03-PHASE-0-REFACTOR.md](03-PHASE-0-REFACTOR.md) | The plan for extracting the shared `core` package and the `StorageAdapter` interface. **Complete.** |
+| 04 | [04-TESTING.md](04-TESTING.md) | How the project is tested: the three layers, the adapter conformance suite, how to test Express routes, and how to add a test. |
+| 05 | [05-PHASE-1-SAAS.md](05-PHASE-1-SAAS.md) | The plan for the hosted service on Postgres — step sequence and status. **The current active phase.** |
 | 10 | [10-WORKLOG.md](10-WORKLOG.md) | Running, append-only log of what we actually did, step by step, with results. |
 
-**Reading order for a new agent:** `PROJECT_PLAN.md` → `01` → `02` → `03` → `10`
+**Reading order for a new agent:** `PROJECT_PLAN.md` → `01` → `02` → `03` → `04` → `05` → `10`
 (then the newest entries in `10-WORKLOG.md` tell you where we are right now).
 
 _Convention: low numbers are stable reference; `10-WORKLOG.md` grows over time.

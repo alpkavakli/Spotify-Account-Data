@@ -8,6 +8,11 @@ const { StorageAdapter } = require("@lyricsearch/core/storage");
 // SQLite implementation of the StorageAdapter contract — the Personal Edition's
 // single-user store. All SQL lives here; nothing else in apps/personal touches
 // the database directly.
+//
+// The methods are `async` to satisfy the contract, but node:sqlite is synchronous
+// so the work happens inline and the promise is already resolved when it returns.
+// There is no thread hop and no added latency — only the shape callers need in
+// order to be able to hold a PostgresAdapter instead.
 class SqliteAdapter extends StorageAdapter {
   /**
    * @param {string} dataDir  directory holding spotify.db
@@ -74,7 +79,7 @@ class SqliteAdapter extends StorageAdapter {
   }
 
   // ── ingest ──
-  upsertSongs(songs) {
+  async upsertSongs(songs) {
     const stmt = this.db.prepare(`
       INSERT INTO tracks (match_key, artist, track, album, uri, in_library, play_count, ms_played, playlists)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -110,7 +115,7 @@ class SqliteAdapter extends StorageAdapter {
   }
 
   // ── search & read ──
-  searchByLyrics(ftsQuery) {
+  async searchByLyrics(ftsQuery) {
     return this.db
       .prepare(
         `SELECT t.id, t.artist, t.track, t.album, t.uri, t.play_count, t.in_library, t.playlists,
@@ -125,7 +130,7 @@ class SqliteAdapter extends StorageAdapter {
       .all(ftsQuery);
   }
 
-  getSong(id) {
+  async getSong(id) {
     return (
       this.db
         .prepare(
@@ -138,14 +143,14 @@ class SqliteAdapter extends StorageAdapter {
     );
   }
 
-  getSongsByIds(ids) {
+  async getSongsByIds(ids) {
     const placeholders = ids.map(() => "?").join(",");
     return this.db
       .prepare(`SELECT id, artist, track, uri FROM tracks WHERE id IN (${placeholders})`)
       .all(...ids.map(Number));
   }
 
-  getStats() {
+  async getStats() {
     const totals = this.db
       .prepare(
         `SELECT COUNT(*) tracks, COUNT(DISTINCT artist) artists,
@@ -168,7 +173,7 @@ class SqliteAdapter extends StorageAdapter {
     return { totals, topSongs, topArtists };
   }
 
-  getStatus() {
+  async getStatus() {
     const tracks = this.db.prepare("SELECT COUNT(*) c FROM tracks").get().c;
     const statuses = this.db
       .prepare("SELECT status, COUNT(*) c FROM lyrics GROUP BY status")
@@ -177,13 +182,13 @@ class SqliteAdapter extends StorageAdapter {
     return { tracks, statuses };
   }
 
-  getOkLyricCount() {
+  async getOkLyricCount() {
     return this.db
       .prepare("SELECT COUNT(*) c FROM lyrics WHERE status = 'ok'")
       .get().c;
   }
 
-  getOkLyricBodies() {
+  async getOkLyricBodies() {
     return this.db
       .prepare(
         `SELECT l.body, t.play_count FROM lyrics l
@@ -193,7 +198,7 @@ class SqliteAdapter extends StorageAdapter {
   }
 
   // ── lyrics ──
-  getSongsNeedingLyrics({ retryErrors = false } = {}) {
+  async getSongsNeedingLyrics({ retryErrors = false } = {}) {
     return this.db
       .prepare(
         `SELECT t.id, t.artist, t.track FROM tracks t
@@ -204,7 +209,7 @@ class SqliteAdapter extends StorageAdapter {
       .all();
   }
 
-  saveLyrics(songId, { status, source, body }) {
+  async saveLyrics(songId, { status, source, body }) {
     this.db.prepare("DELETE FROM lyrics_fts WHERE rowid = ?").run(songId);
     this.db
       .prepare(
@@ -222,7 +227,7 @@ class SqliteAdapter extends StorageAdapter {
     }
   }
 
-  getLyricStatusCounts() {
+  async getLyricStatusCounts() {
     return this.db
       .prepare("SELECT status, COUNT(*) c FROM lyrics GROUP BY status")
       .all()
@@ -230,11 +235,11 @@ class SqliteAdapter extends StorageAdapter {
   }
 
   // ── spotify auth ──
-  getAuth() {
+  async getAuth() {
     return this.db.prepare("SELECT * FROM auth WHERE id = 1").get() || null;
   }
 
-  saveTokens({ access_token, refresh_token, expires_at }) {
+  async saveTokens({ access_token, refresh_token, expires_at }) {
     this.db
       .prepare(
         `INSERT INTO auth (id, access_token, refresh_token, expires_at)
@@ -247,22 +252,22 @@ class SqliteAdapter extends StorageAdapter {
       .run(access_token, refresh_token, expires_at);
   }
 
-  setAuthUser({ user_id, display_name }) {
+  async setAuthUser({ user_id, display_name }) {
     this.db
       .prepare("UPDATE auth SET user_id = ?, display_name = ? WHERE id = 1")
       .run(user_id, display_name);
   }
 
-  clearAuth() {
+  async clearAuth() {
     this.db.prepare("DELETE FROM auth WHERE id = 1").run();
   }
 
-  setSongUri(songId, uri) {
+  async setSongUri(songId, uri) {
     this.db.prepare("UPDATE tracks SET uri = ? WHERE id = ?").run(uri, songId);
   }
 
   // ── lifecycle ──
-  close() {
+  async close() {
     this.db.close();
   }
 }

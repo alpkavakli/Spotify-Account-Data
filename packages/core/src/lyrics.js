@@ -67,7 +67,10 @@ function pickBest(results, artist, title) {
       best = r;
     }
   }
-  // require at least a partial match on both fields
+  // Require one exact field, or a partial match on both. Deliberately looser
+  // than spotify.pickMatch (>= 6, which demands a signal on both fields):
+  // fetchLyrics retries with an artist-less search, and those results can never
+  // match on artist. See test/lyrics.test.js "pickBest".
   return bestScore >= 4 ? best : null;
 }
 

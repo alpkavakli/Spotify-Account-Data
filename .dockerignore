@@ -17,6 +17,11 @@
 **/*.db-shm
 **/*.db-wal
 
+# tests — never shipped in a runtime image
+**/test
+**/*.test.js
+packages/core/testing
+
 # docs / os cruft
 *.md
 **/*.md
