@@ -191,3 +191,48 @@ concrete DB (Dependency Inversion), and both editions' adapters are interchangea
 
 **Result:** ✅ Adapter fully implemented and independently verified. Step 5 can swap the
 host onto it with high confidence, and extract Spotify at the same time.
+
+---
+
+## 2026-07-27 — Phase 0, Step 5: rewire host onto adapter + extract Spotify ✅
+
+**Why:** finish the extraction — the host stops touching SQL entirely and depends only
+on the `StorageAdapter`; Spotify's HTTP/OAuth logic moves into `core` while its token
+*storage* goes through the adapter. This completes the shared-core architecture.
+
+**What we did:**
+- **`packages/core/src/spotify.js`** — stateless Spotify client: `authorizeUrl`,
+  `exchangeCode`, `refreshAccessToken`, `getMe`, `apiFetch` (429 backoff / 401→NO_AUTH),
+  `pickMatch`, `searchTrackUri` (returns uri|null, no DB), `createPlaylist`, `addTracks`.
+  Every call takes credentials/token as arguments — no env, no DB, no token storage.
+  Added to `index.js` + `exports` map (`./spotify`).
+- **`apps/personal/src/store.js`** — the single `SqliteAdapter` instance (replaces the
+  old `db.js` singleton); owns the `DATA_DIR` resolution.
+- **`apps/personal/src/spotify.js`** — reduced to thin glue: creds from env, tokens via
+  `store` (getAuth/saveTokens/setAuthUser/clearAuth/setSongUri), all HTTP delegated to
+  `core.spotify`. Same public surface + error codes (NO_AUTH / NO_CREDENTIALS) as before.
+- **Rewired hosts** to `store`: `server.js` (all 6 read routes + createPlaylist),
+  `ingest.js` (`store.upsertSongs`), `lyrics.js` (`getSongsNeedingLyrics` / `saveLyrics`
+  / `getLyricStatusCounts`).
+- **Deleted `apps/personal/src/db.js`.** All SQL now lives only in `sqlite-adapter.js`.
+- Fixed two stale user-facing messages (`Backend/.env` → `apps/personal/.env`).
+
+**Behavior-preservation note (Spotify):** the OAuth network flow stays untestable until
+Phase 2 (no creds). The glue keeps the original structure; one intentional change is that
+a token is fetched once per host operation and passed into `core` (the old code fetched it
+inside each `apiFetch`). For the short call bursts here (resolve URIs → create → add) this
+is equivalent; documented so it isn't mistaken for a regression.
+
+**Verification — all green:**
+1. **HTTP baseline** — all 8 endpoints **byte-for-byte identical** to Step-1 baseline.
+2. **Spotify glue (no creds)** — `/login`→503, `/createPlaylist` (no session)→401
+   `"not logged in"`, `/logout`→`{ok:true}`. Exercises `store` auth methods.
+3. **Adapter suite** — 12/12 still pass.
+4. **Ingest CLI** (now `store.upsertSongs`) — temp copy `tracks` **identical to real DB**.
+5. **Lyrics CLI** — `nothing to fetch`, `ok=3714 instrumental=144 notfound=186`.
+6. **core.spotify unit** — `authorizeUrl` output **matches the original byte-for-byte**;
+   `pickMatch` picks the exact match; all 8 exports present.
+
+**Result:** ✅ Host depends only on the adapter; Spotify extracted; `db.js` gone. The
+Phase 0 architecture (shared `core` + storage adapter) is in place. Only Step 6 (Docker/
+ops) remains.

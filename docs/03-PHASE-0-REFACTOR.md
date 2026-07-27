@@ -73,7 +73,7 @@ same shape later (Liskov). Grouped by concern (Interface Segregation).
 - [x] Step 2 — scaffold workspaces (see `10-WORKLOG.md`, 2026-07-27)
 - [x] Step 3 — extract `core` (matching, search, ingest, lyrics) (see `10-WORKLOG.md`, 2026-07-27)
 - [x] Step 4 — `storage.js` + `sqlite-adapter.js` (see `10-WORKLOG.md`, 2026-07-27)
-- [ ] Step 5 — rewire host **+ extract & rewire `spotify`**
-- [ ] Step 6 — verify + ops paths
+- [x] Step 5 — rewire host onto adapter + extract/rewire `spotify`; delete `db.js` (see `10-WORKLOG.md`, 2026-07-27)
+- [ ] Step 6 — Docker/compose rewrite + ops paths (final Phase 0 step)
 
 See `10-WORKLOG.md` for actual results as each step completes.

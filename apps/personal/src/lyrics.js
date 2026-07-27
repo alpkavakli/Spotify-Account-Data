@@ -1,51 +1,28 @@
-const { db } = require("./db");
+const store = require("./store");
 const { fetchLyrics } = require("@lyricsearch/core/lyrics");
 
 const CONCURRENCY = 4;
-
-const insertLyrics = db.prepare(`
-  INSERT INTO lyrics (track_id, status, source, body, fetched_at)
-  VALUES (?, ?, ?, ?, datetime('now'))
-  ON CONFLICT(track_id) DO UPDATE SET
-    status = excluded.status,
-    source = excluded.source,
-    body = excluded.body,
-    fetched_at = excluded.fetched_at
-`);
-const insertFts = db.prepare(
-  "INSERT INTO lyrics_fts (rowid, body) VALUES (?, ?)"
-);
-const deleteFts = db.prepare("DELETE FROM lyrics_fts WHERE rowid = ?");
-
-function saveLyrics(trackId, status, source, body) {
-  deleteFts.run(trackId);
-  insertLyrics.run(trackId, status, source, body);
-  if (status === "ok" && body) insertFts.run(trackId, body);
-}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function processOne(row) {
   try {
     const { status, source, body } = await fetchLyrics(row.artist, row.track);
-    saveLyrics(row.id, status, source, body);
+    store.saveLyrics(row.id, { status, source, body });
     return status;
   } catch (err) {
-    saveLyrics(row.id, "error", String(err.message || err).slice(0, 200), null);
+    store.saveLyrics(row.id, {
+      status: "error",
+      source: String(err.message || err).slice(0, 200),
+      body: null,
+    });
     return "error";
   }
 }
 
 async function main() {
   const retryErrors = process.argv.includes("--retry-errors");
-  const pending = db
-    .prepare(
-      `SELECT t.id, t.artist, t.track FROM tracks t
-       LEFT JOIN lyrics l ON l.track_id = t.id
-       WHERE l.track_id IS NULL ${retryErrors ? "OR l.status = 'error'" : ""}
-       ORDER BY t.play_count DESC`
-    )
-    .all();
+  const pending = store.getSongsNeedingLyrics({ retryErrors });
 
   if (pending.length === 0) {
     console.log("nothing to fetch — all tracks processed");
@@ -80,10 +57,8 @@ async function main() {
 }
 
 function printStats() {
-  const rows = db
-    .prepare("SELECT status, COUNT(*) c FROM lyrics GROUP BY status")
-    .all();
-  console.log("lyrics status:", rows.map((r) => `${r.status}=${r.c}`).join("  "));
+  const rows = store.getLyricStatusCounts();
+  console.log("lyrics status:", rows.map((r) => `${r.status}=${r.count}`).join("  "));
 }
 
 main();

@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
 const express = require("express");
-const { db } = require("./db");
+const store = require("./store");
 const spotify = require("./spotify");
 const {
   toFtsQuery,
@@ -28,18 +28,7 @@ app.get("/searchForWord", (req, res) => {
 
   let rows;
   try {
-    rows = db
-      .prepare(
-        `SELECT t.id, t.artist, t.track, t.album, t.uri, t.play_count, t.in_library, t.playlists,
-                l.body,
-                snippet(lyrics_fts, 0, '[[', ']]', ' … ', 12) AS snippet
-         FROM lyrics_fts
-         JOIN tracks t ON t.id = lyrics_fts.rowid
-         JOIN lyrics l ON l.track_id = t.id
-         WHERE lyrics_fts MATCH ?
-         ORDER BY t.play_count DESC, t.artist, t.track`
-      )
-      .all(ftsQuery);
+    rows = store.searchByLyrics(ftsQuery);
   } catch (err) {
     return res.status(400).json({ error: "invalid query" });
   }
@@ -63,14 +52,7 @@ app.get("/searchForWord", (req, res) => {
 });
 
 app.get("/song/:id", (req, res) => {
-  const row = db
-    .prepare(
-      `SELECT t.id, t.artist, t.track, t.album, t.uri, t.play_count, t.ms_played,
-              t.in_library, t.playlists, l.status, l.body
-       FROM tracks t LEFT JOIN lyrics l ON l.track_id = t.id
-       WHERE t.id = ?`
-    )
-    .get(Number(req.params.id));
+  const row = store.getSong(req.params.id);
   if (!row) return res.status(404).json({ error: "not found" });
   res.json({
     id: row.id,
@@ -92,19 +74,10 @@ app.get("/song/:id", (req, res) => {
 let wordCache = null;
 
 function topWords() {
-  const okCount = db
-    .prepare("SELECT COUNT(*) c FROM lyrics WHERE status = 'ok'")
-    .get().c;
+  const okCount = store.getOkLyricCount();
   if (wordCache && wordCache.okCount === okCount) return wordCache;
 
-  const rows = db
-    .prepare(
-      `SELECT l.body, t.play_count FROM lyrics l
-       JOIN tracks t ON t.id = l.track_id WHERE l.status = 'ok'`
-    )
-    .all();
-
-  const list = aggregateTopWords(rows, 300);
+  const list = aggregateTopWords(store.getOkLyricBodies(), 300);
 
   wordCache = { okCount, list };
   return wordCache;
@@ -119,25 +92,7 @@ app.get("/topWords", (req, res) => {
 // --- Listening stats ---
 
 app.get("/stats", (req, res) => {
-  const totals = db
-    .prepare(
-      `SELECT COUNT(*) tracks, COUNT(DISTINCT artist) artists,
-              SUM(play_count) plays, SUM(ms_played) ms FROM tracks`
-    )
-    .get();
-  const topSongs = db
-    .prepare(
-      `SELECT id, artist, track, play_count, ms_played FROM tracks
-       WHERE play_count > 0 ORDER BY ms_played DESC LIMIT 25`
-    )
-    .all();
-  const topArtists = db
-    .prepare(
-      `SELECT artist, COUNT(*) songs, SUM(play_count) plays, SUM(ms_played) ms
-       FROM tracks GROUP BY artist HAVING plays > 0
-       ORDER BY ms DESC LIMIT 25`
-    )
-    .all();
+  const { totals, topSongs, topArtists } = store.getStats();
   res.json({
     tracks: totals.tracks,
     artists: totals.artists,
@@ -160,14 +115,11 @@ app.get("/stats", (req, res) => {
 });
 
 app.get("/status", (req, res) => {
-  const tracks = db.prepare("SELECT COUNT(*) c FROM tracks").get().c;
-  const statuses = db
-    .prepare("SELECT status, COUNT(*) c FROM lyrics GROUP BY status")
-    .all();
-  const lyrics = Object.fromEntries(statuses.map((r) => [r.status, r.c]));
+  const { tracks, statuses } = store.getStatus();
+  const lyrics = Object.fromEntries(statuses.map((r) => [r.status, r.count]));
   res.json({
     tracks,
-    processed: statuses.reduce((s, r) => s + r.c, 0),
+    processed: statuses.reduce((s, r) => s + r.count, 0),
     lyrics,
   });
 });
@@ -181,7 +133,7 @@ app.get("/login", (req, res) => {
   if (!spotify.isConfigured()) {
     return res
       .status(503)
-      .send("Spotify credentials missing — see Backend/.env.example");
+      .send("Spotify credentials missing — see apps/personal/.env.example");
   }
   const state = crypto.randomBytes(16).toString("hex");
   pendingStates.add(state);
@@ -237,12 +189,7 @@ app.post("/createPlaylist", async (req, res) => {
     return res.status(401).json({ error: "not logged in" });
   }
 
-  const placeholders = trackIds.map(() => "?").join(",");
-  const rows = db
-    .prepare(
-      `SELECT id, artist, track, uri FROM tracks WHERE id IN (${placeholders})`
-    )
-    .all(...trackIds.map(Number));
+  const rows = store.getSongsByIds(trackIds);
 
   try {
     // Most rows have no URI (streaming history carries none), so look those up

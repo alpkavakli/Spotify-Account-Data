@@ -11,7 +11,8 @@
     "./ingest": "./src/ingest.js",
     "./lyrics": "./src/lyrics.js",
     "./search": "./src/search.js",
-    "./storage": "./src/storage.js"
+    "./storage": "./src/storage.js",
+    "./spotify": "./src/spotify.js"
   },
   "files": [
     "src"

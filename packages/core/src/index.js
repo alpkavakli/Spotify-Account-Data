@@ -13,4 +13,5 @@ module.exports = {
   lyrics: require("./lyrics"),
   search: require("./search"),
   storage: require("./storage"),
+  spotify: require("./spotify"),
 };
