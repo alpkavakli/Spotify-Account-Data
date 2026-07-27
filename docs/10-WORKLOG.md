@@ -236,3 +236,49 @@ is equivalent; documented so it isn't mistaken for a regression.
 **Result:** ✅ Host depends only on the adapter; Spotify extracted; `db.js` gone. The
 Phase 0 architecture (shared `core` + storage adapter) is in place. Only Step 6 (Docker/
 ops) remains.
+
+---
+
+## 2026-07-27 — Phase 0, Step 6: Docker/compose rewrite + ops paths ✅ (Phase 0 COMPLETE)
+
+**Why:** the ops files were relocated in Step 2 but still referenced the old
+`Backend/`/`Frontend/` layout and had never been built. Make them monorepo-correct and
+actually verify a build+run.
+
+**What we did:**
+- **`apps/personal/Dockerfile`** — rewritten for npm workspaces: build context = repo
+  root; copy `package.json` + `package-lock.json` + both workspace manifests, `npm ci
+  --omit=dev` (links the `core` workspace), then copy `packages/core` + `apps/personal`.
+  `DATA_DIR`/`EXPORT_DIR=/data`; WORKDIR `/app/apps/personal`.
+- **`apps/personal/docker-compose.yml`** — `build.context: ../..`,
+  `dockerfile: apps/personal/Dockerfile`; `env_file: .env` (optional);
+  volume `./Data:/data`.
+- **`apps/personal/docker-entrypoint.sh`** — paths updated (`/app/apps/personal/.env`,
+  ingest from `/data`).
+- **`.dockerignore`** — moved to the **repo root** (Docker reads it from the build-context
+  root, which is now the repo root, not `apps/personal/`); globbed for `**/Data`, `**/*.db`,
+  `**/node_modules`, `**/.env`.
+- **`apps/personal/.env.example`** + **root `README.md`** — refreshed for the monorepo
+  (paths, quick-start from repo root, Docker from `apps/personal/`, new project-structure
+  tree).
+
+**Verification (Docker built + run for the FIRST time):**
+- `sh -n` entrypoint: OK. `docker compose config`: context → repo root, `Data` → `/data`,
+  `env_file` optional accepted (Compose v5).
+- `docker compose build`: **image built successfully** (`personal-app:latest`).
+- `docker compose up -d` → container served `/status` = `4044/4044` and
+  `/searchForWord?q=door` = `154`, then `docker compose down`. Host DB untouched
+  (spotify.db + wal/shm intact). `.env` is created inside the image only, never on the host.
+
+**Result:** ✅ **Phase 0 COMPLETE.** The single-user app is now a monorepo with a shared,
+storage-agnostic `@lyricsearch/core` and a `StorageAdapter`; the Personal Edition runs on
+`SqliteAdapter` (local + Docker, both verified). Nothing in `core` or the routes will
+change when the SaaS adds a `PostgresAdapter`.
+
+**Phase 0 scorecard — behavior preserved throughout:** every step re-verified all 8
+baseline endpoints byte-for-byte; ingest reproduces the `tracks` table exactly; adapter
+suite 12/12; live lyrics + Spotify-client unit checks green. Only the Spotify OAuth
+*network* flow remains untested (needs creds — Phase 2).
+
+**Next: Phase 1** — SaaS core on Postgres (multi-tenant): a `PostgresAdapter`
+implementing the same `StorageAdapter`, upload intake, accounts. No `core` changes.

@@ -74,6 +74,10 @@ same shape later (Liskov). Grouped by concern (Interface Segregation).
 - [x] Step 3 — extract `core` (matching, search, ingest, lyrics) (see `10-WORKLOG.md`, 2026-07-27)
 - [x] Step 4 — `storage.js` + `sqlite-adapter.js` (see `10-WORKLOG.md`, 2026-07-27)
 - [x] Step 5 — rewire host onto adapter + extract/rewire `spotify`; delete `db.js` (see `10-WORKLOG.md`, 2026-07-27)
-- [ ] Step 6 — Docker/compose rewrite + ops paths (final Phase 0 step)
+- [x] Step 6 — Docker/compose rewrite + ops paths; **image built & run for the first time** (see `10-WORKLOG.md`, 2026-07-27)
+
+**✅ Phase 0 COMPLETE.** Shared `core` + `StorageAdapter` in place; Personal Edition
+runs on `SqliteAdapter`; Docker verified. Next: Phase 1 (SaaS core on Postgres — a
+second adapter, no changes to `core`).
 
 See `10-WORKLOG.md` for actual results as each step completes.

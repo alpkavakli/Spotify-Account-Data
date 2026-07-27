@@ -1,18 +1,19 @@
 services:
   app:
     build:
-      context: .
-      dockerfile: Dockerfile
+      # Repo root, so the @lyricsearch/core workspace is in the build context.
+      context: ../..
+      dockerfile: apps/personal/Dockerfile
     ports:
       - "3000:3000"
-    # Loads Spotify credentials if you've created Backend/.env. Optional so
+    # Loads Spotify credentials if you've created apps/personal/.env. Optional so
     # `docker compose up` still works before you've set it up — the entrypoint
     # creates a blank .env from the example inside the container.
     env_file:
-      - path: Backend/.env
+      - path: .env
         required: false
-    # Your Spotify export + the generated spotify.db live on the host, mounted
-    # in. Nothing personal is baked into the image.
+    # Your Spotify export + the generated spotify.db live on the host, mounted in
+    # at /data (the app's DATA_DIR). Nothing personal is baked into the image.
     volumes:
-      - ./Data:/app/Data
+      - ./Data:/data
     restart: unless-stopped

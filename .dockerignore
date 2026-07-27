@@ -1,4 +1,5 @@
-# Keep the build context small and free of secrets / personal data.
+# Build context is the repo root (see apps/personal/docker-compose.yml).
+# Keep it small and free of secrets / personal data.
 **/node_modules
 **/.env
 **/.claude
@@ -7,8 +8,9 @@
 .gitattributes
 
 # Personal Spotify export + database — mounted at runtime, never baked in.
-Data/*
-!Data/.gitkeep
+**/Data/*
+!**/Data/.gitkeep
+!**/Data/README.md
 
 # sqlite files anywhere
 **/*.db

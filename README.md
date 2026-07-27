@@ -8,12 +8,13 @@ library, playlists, and streaming history — with the lyric line highlighted.
 Tick the ones you want and it builds the playlist on your Spotify account.
 
 > Your Spotify export is **personal data and is never committed** to this repo.
-> The `Data/` folder ships empty; you drop your own export into it locally.
+> The `apps/personal/Data/` folder ships empty; you drop your own export into it
+> locally.
 
 ## How it works
 
-- **`ingest`** reads your Spotify export JSON (`Data/`) into a local SQLite
-  database, merging library + playlists + streaming history into one row per song.
+- **`ingest`** reads your Spotify export JSON (`apps/personal/Data/`) into a local
+  SQLite database, merging library + playlists + streaming history into one row per song.
 - **`lyrics`** fetches lyrics for every song from [LRCLIB](https://lrclib.net)
   (free, no API key) and indexes them with SQLite FTS5 full-text search.
 - **`start`** serves a small web UI and a `/searchForWord` API. Search uses a
@@ -31,11 +32,11 @@ Tick the ones you want and it builds the playlist on your Spotify account.
 ## Quick start (local)
 
 ```bash
-# 1. Get your Spotify data and put the JSON in Data/  →  see Data/README.md
-# 2. From the Backend folder:
-cd Backend
+# 1. Get your Spotify data and put the JSON in apps/personal/Data/
+#    →  see apps/personal/Data/README.md
+# 2. From the repo root (npm workspaces; the root scripts delegate to the app):
 npm install
-npm run ingest        # builds Data/spotify.db (seconds)
+npm run ingest        # builds apps/personal/Data/spotify.db (seconds)
 npm run lyrics        # fetches + indexes lyrics (~10-15 min, one time)
 npm start             # http://127.0.0.1:3000
 ```
@@ -45,8 +46,10 @@ npm start             # http://127.0.0.1:3000
 ## Quick start (Docker)
 
 ```bash
-# Put your Spotify JSON in Data/ first (see Data/README.md), then:
-docker compose up --build           # http://127.0.0.1:3000
+# Put your Spotify JSON in apps/personal/Data/ first
+# (see apps/personal/Data/README.md), then from apps/personal/:
+cd apps/personal
+docker compose up --build                # http://127.0.0.1:3000
 docker compose exec app npm run lyrics   # fetch lyrics (one time, ~15 min)
 ```
 
@@ -68,10 +71,10 @@ Searching works without this. To build playlists you need OAuth credentials:
 
    Spotify rejects `http://localhost` — it must be the loopback IP `127.0.0.1`.
 3. Enable **Web API**, save, and copy the **Client ID** and **Client Secret**.
-4. In `Backend/`, copy `.env.example` to `.env` and paste them in:
+4. In `apps/personal/`, copy `.env.example` to `.env` and paste them in:
 
    ```bash
-   cp .env.example .env
+   cp apps/personal/.env.example apps/personal/.env
    ```
 
 5. Restart the server and click **log in with spotify** in the top-right.
@@ -88,21 +91,35 @@ still can't be found are listed so you know what was skipped.
 
 ## Project structure
 
+An npm-workspaces monorepo. Domain logic lives in a shared, storage-agnostic
+`core` package; the Personal Edition is a thin host over it on a SQLite adapter.
+
 ```
 .
-├── Backend/          Express server, ingest + lyrics scripts, SQLite layer
-│   ├── src/
-│   │   ├── server.js     HTTP API + routes
-│   │   ├── ingest.js     export JSON  →  spotify.db
-│   │   ├── lyrics.js     lyric fetch + FTS index
-│   │   ├── spotify.js    OAuth + playlist creation
-│   │   └── db.js         schema, matching/normalisation helpers
-│   ├── .env.example
-│   └── package.json
-├── Frontend/         Static web UI (index.html)
-├── Data/             Your Spotify export goes here (git-ignored, empty in repo)
-├── Dockerfile
-└── docker-compose.yml
+├── packages/
+│   └── core/             shared domain logic — no DB, no HTTP
+│       └── src/
+│           ├── matching.js   normalize / cleanTitle / matchKey
+│           ├── ingest.js     export JSON  →  canonical songs (pure merge)
+│           ├── lyrics.js     LRCLIB client + status classification
+│           ├── search.js     FTS query build, occurrence + top-word counting
+│           ├── spotify.js     stateless OAuth + Web API client
+│           └── storage.js     the StorageAdapter contract
+├── apps/
+│   └── personal/         OSS self-hosted edition (Express + SQLite)
+│       ├── src/
+│       │   ├── server.js         HTTP API + routes
+│       │   ├── ingest.js         CLI: export JSON  →  spotify.db
+│       │   ├── lyrics.js         CLI: lyric fetch + FTS index
+│       │   ├── spotify.js        token-storage glue over core/spotify
+│       │   ├── sqlite-adapter.js StorageAdapter impl (all SQL lives here)
+│       │   └── store.js          the single adapter instance
+│       ├── frontend/     Static web UI (index.html)
+│       ├── Data/         Your Spotify export goes here (git-ignored, empty in repo)
+│       ├── Dockerfile · docker-compose.yml · .env.example
+│       └── package.json
+├── docs/                 planning + architecture docs (start at docs/00-INDEX.md)
+└── package.json          workspaces root
 ```
 
 ## Privacy
