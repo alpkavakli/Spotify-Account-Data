@@ -1,0 +1,29 @@
+# ─── dependencies ───
+node_modules/
+
+# ─── secrets ───
+.env
+**/.env
+*.local
+
+# ─── local editor / Claude Code config ───
+.claude/
+**/.claude/
+.vscode/
+.idea/
+
+# ─── personal Spotify export + everything derived from it ───
+# Keep the Data/ folder in the repo but never its contents. Each user drops
+# their own export in here (see Data/README.md).
+Data/*
+!Data/.gitkeep
+!Data/README.md
+
+# ─── sqlite database (built locally from your own data) ───
+*.db
+*.db-shm
+*.db-wal
+
+# ─── os cruft ───
+.DS_Store
+Thumbs.db

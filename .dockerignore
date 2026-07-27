@@ -1,0 +1,22 @@
+# Keep the build context small and free of secrets / personal data.
+**/node_modules
+**/.env
+**/.claude
+.git
+.gitignore
+.gitattributes
+
+# Personal Spotify export + database — mounted at runtime, never baked in.
+Data/*
+!Data/.gitkeep
+
+# sqlite files anywhere
+**/*.db
+**/*.db-shm
+**/*.db-wal
+
+# docs / os cruft
+*.md
+**/*.md
+.DS_Store
+Thumbs.db

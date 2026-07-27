@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lyric search</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 680px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.2rem; font-weight: normal; display: inline; }
+  nav { border-bottom: 1px solid #ccc; padding-bottom: .5rem; margin-bottom: 1rem; }
+  nav a { color: #1a6b3c; margin-left: 1rem; font-size: .9rem; }
+  nav a.on { color: #222; text-decoration: none; }
+  form { display: flex; gap: .5rem; margin: 1rem 0; }
+  input[type=text] { flex: 1; font: inherit; padding: .35rem .5rem; border: 1px solid #999; }
+  button { font: inherit; padding: .35rem .9rem; border: 1px solid #999; background: #f2f2f2; cursor: pointer; }
+  button:hover { background: #e6e6e6; }
+  #meta { color: #666; font-size: .85rem; margin-bottom: 1rem; }
+  .song { margin-bottom: 1.1rem; }
+  .song b { font-weight: 600; cursor: pointer; }
+  .song b:hover { text-decoration: underline; }
+  .song .artist { color: #555; }
+  .song .snippet { display: block; font-size: .88rem; color: #444; margin-top: .15rem; }
+  .song .info { font-size: .78rem; color: #888; }
+  .song pre { font: .85rem/1.45 Georgia, serif; white-space: pre-wrap; border-left: 3px solid #ddd;
+              padding: .4rem .8rem; margin: .5rem 0 0; color: #333; }
+  mark { background: #ffe89e; padding: 0 1px; }
+  table { border-collapse: collapse; font-size: .9rem; width: 100%; }
+  td, th { text-align: left; padding: .25rem .8rem .25rem 0; border-bottom: 1px solid #eee; }
+  th { font-weight: 600; font-size: .8rem; color: #666; }
+  td.num, th.num { text-align: right; }
+  .wordlink { color: #1a6b3c; cursor: pointer; }
+  .wordlink:hover { text-decoration: underline; }
+  h2 { font-size: 1rem; margin: 1.4rem 0 .5rem; }
+  .hidden { display: none; }
+  #account { float: right; font-size: .8rem; color: #666; }
+  #account a, #account button { font-size: .8rem; }
+  #account button { border: none; background: none; padding: 0; color: #1a6b3c;
+                    text-decoration: underline; cursor: pointer; }
+  #bar { margin: .6rem 0 1rem; font-size: .85rem; }
+  #bar button { margin-right: .5rem; }
+  #bar .sel { color: #666; }
+  .song input[type=checkbox] { margin-right: .45rem; }
+  .song.excluded b, .song.excluded .artist { color: #999; }
+  #dialog { border: 1px solid #999; background: #fafafa; padding: .8rem; margin: .6rem 0 1rem; }
+  #dialog label { display: block; margin-bottom: .5rem; font-size: .85rem; }
+  #dialog input[type=text] { width: 100%; box-sizing: border-box; margin-top: .2rem; }
+  #dialog .radios { font-size: .85rem; margin-bottom: .6rem; }
+  #dialog .radios label { display: inline; margin-right: 1rem; }
+  #note { font-size: .85rem; margin: .5rem 0; }
+  #note.err { color: #a11; }
+  #note.ok { color: #1a6b3c; }
+</style>
+</head>
+<body>
+<nav>
+  <h1>lyric search</h1>
+  <a href="#search" class="on" data-view="search">search</a>
+  <a href="#words" data-view="words">top words</a>
+  <a href="#stats" data-view="stats">stats</a>
+  <span id="account"></span>
+</nav>
+<div id="meta"></div>
+
+<div id="view-search">
+  <form id="f">
+    <input type="text" id="q" placeholder="word or phrase, e.g. door" autofocus>
+    <button>search</button>
+  </form>
+
+  <div id="bar" class="hidden">
+    <button id="createBtn">create playlist</button>
+    <span id="selCount" class="sel hidden"></span>
+    <button id="cancelBtn" class="hidden">cancel</button>
+  </div>
+
+  <div id="dialog" class="hidden">
+    <label>playlist name
+      <input type="text" id="plName" placeholder="songs about door">
+    </label>
+    <div class="radios">
+      privacy:
+      <label><input type="radio" name="priv" value="private" checked> private</label>
+      <label><input type="radio" name="priv" value="public"> public</label>
+    </div>
+    <button id="confirmBtn">create</button>
+    <button id="backBtn">back</button>
+  </div>
+
+  <div id="note" class="hidden"></div>
+  <div id="results"></div>
+</div>
+
+<div id="view-words" class="hidden"></div>
+<div id="view-stats" class="hidden"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const meta = $('meta'), results = $('results');
+const esc = t => t.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+let lastQuery = '';
+let picking = false;   // true once "create playlist" reveals the checkboxes
+let auth = { configured: false, loggedIn: false };
+
+// --- views ---
+const views = ['search', 'words', 'stats'];
+function show(view) {
+  for (const v of views) {
+    $('view-' + v).classList.toggle('hidden', v !== view);
+    document.querySelector(`nav a[data-view=${v}]`).classList.toggle('on', v === view);
+  }
+  if (view === 'words') loadWords();
+  if (view === 'stats') loadStats();
+  if (view === 'search') showStatus();
+}
+document.querySelectorAll('nav a').forEach(a =>
+  a.addEventListener('click', e => { e.preventDefault(); show(a.dataset.view); }));
+
+function showStatus() {
+  fetch('/status').then(r => r.json()).then(s => {
+    const ok = (s.lyrics && s.lyrics.ok) || 0;
+    meta.textContent = s.tracks + ' songs indexed, lyrics found for ' + ok +
+      (s.processed < s.tracks ? ' (' + (s.tracks - s.processed) + ' still unprocessed)' : '');
+  });
+}
+showStatus();
+
+// --- search ---
+$('f').addEventListener('submit', e => { e.preventDefault(); search($('q').value.trim()); });
+
+async function search(q) {
+  if (!q) return;
+  lastQuery = q;
+  $('q').value = q;
+  show('search');
+  results.textContent = 'searching…';
+  const res = await fetch('/searchForWord?q=' + encodeURIComponent(q));
+  const data = await res.json();
+  if (data.error) { results.textContent = data.error; return; }
+  meta.textContent = data.count + ' song' + (data.count === 1 ? '' : 's') + ' mention "' + data.query + '"';
+  results.innerHTML = '';
+  for (const s of data.results) results.appendChild(renderSong(s));
+  if (!data.results.length) results.textContent = 'nothing found.';
+
+  // step 2: offer playlist creation once there is something to add
+  resetPicking();
+  $('bar').classList.toggle('hidden', data.results.length === 0);
+}
+
+function renderSong(s) {
+  const div = document.createElement('div');
+  div.className = 'song';
+  div.dataset.id = s.id;
+
+  const title = document.createElement('div');
+
+  // Only visible once "create playlist" is pressed (step 3).
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = true;
+  cb.className = picking ? '' : 'hidden';
+  cb.addEventListener('change', () => {
+    div.classList.toggle('excluded', !cb.checked);
+    updateCount();
+  });
+  title.appendChild(cb);
+
+  const b = document.createElement('b');
+  b.textContent = s.track;
+  b.title = 'show full lyrics';
+  b.addEventListener('click', () => toggleLyrics(div, s.id));
+  title.appendChild(b);
+  const artist = document.createElement('span');
+  artist.className = 'artist';
+  artist.textContent = ' — ' + s.artist;
+  title.appendChild(artist);
+  div.appendChild(title);
+
+  const snip = document.createElement('span');
+  snip.className = 'snippet';
+  snip.innerHTML = esc(s.snippet).replaceAll('[[', '<mark>').replaceAll(']]', '</mark>');
+  div.appendChild(snip);
+
+  const info = document.createElement('span');
+  info.className = 'info';
+  const bits = [];
+  if (s.occurrences > 1) bits.push(s.occurrences + '× in lyrics');
+  if (s.playCount) bits.push('played ' + s.playCount + '×');
+  if (s.inLibrary) bits.push('liked');
+  if (s.playlists.length) bits.push('in: ' + s.playlists.join(', '));
+  info.textContent = bits.join(' · ');
+  div.appendChild(info);
+  return div;
+}
+
+async function toggleLyrics(div, id) {
+  const open = div.querySelector('pre');
+  if (open) { open.remove(); return; }
+  const res = await fetch('/song/' + id);
+  const s = await res.json();
+  const pre = document.createElement('pre');
+  if (!s.lyrics) { pre.textContent = '(no lyrics: ' + s.lyricsStatus + ')'; div.appendChild(pre); return; }
+  let html = esc(s.lyrics);
+  for (const w of lastQuery.toLowerCase().split(/\s+/).filter(Boolean)) {
+    const safe = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    html = html.replace(new RegExp('\\b(' + safe + '\\w*)', 'gi'), '<mark>$1</mark>');
+  }
+  pre.innerHTML = html;
+  div.appendChild(pre);
+}
+
+// --- playlist creation (steps 2-7) ---
+
+function setNote(msg, kind) {
+  const n = $('note');
+  n.className = kind || '';
+  n.classList.toggle('hidden', !msg);
+  n.textContent = msg || '';
+}
+
+function checkboxes() {
+  return [...results.querySelectorAll('.song input[type=checkbox]')];
+}
+
+function selectedIds() {
+  return checkboxes()
+    .filter(cb => cb.checked)
+    .map(cb => Number(cb.closest('.song').dataset.id));
+}
+
+function updateCount() {
+  const n = selectedIds().length;
+  $('selCount').textContent = n + ' of ' + checkboxes().length + ' selected';
+  $('confirmBtn').disabled = n === 0;
+}
+
+function resetPicking() {
+  picking = false;
+  $('dialog').classList.add('hidden');
+  $('cancelBtn').classList.add('hidden');
+  $('selCount').classList.add('hidden');
+  $('createBtn').textContent = 'create playlist';
+  $('createBtn').classList.remove('hidden');
+  setNote('');
+}
+
+// step 3 -> reveal checkboxes; step 5 -> second press opens the name dialog
+$('createBtn').addEventListener('click', () => {
+  if (!auth.configured) {
+    setNote('Spotify credentials not set up yet — see Backend/.env.example', 'err');
+    return;
+  }
+  if (!auth.loggedIn) {
+    setNote('log in with Spotify first (top right)', 'err');
+    return;
+  }
+
+  if (!picking) {
+    picking = true;
+    checkboxes().forEach(cb => { cb.classList.remove('hidden'); cb.checked = true; });
+    results.querySelectorAll('.song').forEach(d => d.classList.remove('excluded'));
+    $('selCount').classList.remove('hidden');
+    $('cancelBtn').classList.remove('hidden');
+    $('createBtn').textContent = 'continue';
+    updateCount();
+    setNote('untick any song you do not want, then press continue.');
+    return;
+  }
+
+  // step 6: ask for name and privacy
+  $('plName').value = 'songs about ' + lastQuery;
+  $('dialog').classList.remove('hidden');
+  $('createBtn').classList.add('hidden');
+  setNote('');
+  $('plName').focus();
+});
+
+$('cancelBtn').addEventListener('click', () => {
+  checkboxes().forEach(cb => cb.classList.add('hidden'));
+  results.querySelectorAll('.song').forEach(d => d.classList.remove('excluded'));
+  resetPicking();
+});
+
+$('backBtn').addEventListener('click', () => {
+  $('dialog').classList.add('hidden');
+  $('createBtn').classList.remove('hidden');
+});
+
+// step 7: create it
+$('confirmBtn').addEventListener('click', async () => {
+  const name = $('plName').value.trim();
+  if (!name) { setNote('give the playlist a name', 'err'); return; }
+
+  const ids = selectedIds();
+  const isPublic = document.querySelector('input[name=priv]:checked').value === 'public';
+
+  $('confirmBtn').disabled = true;
+  setNote('creating… looking up ' + ids.length + ' songs on Spotify, this can take a minute.');
+
+  try {
+    const res = await fetch('/createPlaylist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, isPublic, trackIds: ids, query: lastQuery })
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setNote(data.error || 'could not create the playlist', 'err');
+      $('confirmBtn').disabled = false;
+      if (res.status === 401) loadAuth();
+      return;
+    }
+
+    let msg = 'created "' + data.name + '" with ' + data.added + ' songs';
+    if (data.missing.length) msg += ' — ' + data.missing.length + ' not found on Spotify';
+    setNote(msg, 'ok');
+
+    if (data.playlistUrl) {
+      const a = document.createElement('a');
+      a.href = data.playlistUrl; a.target = '_blank';
+      a.textContent = ' open in Spotify';
+      $('note').appendChild(a);
+    }
+    if (data.missing.length) {
+      const pre = document.createElement('pre');
+      pre.textContent = 'not found:\n' + data.missing.join('\n');
+      $('note').appendChild(pre);
+    }
+
+    checkboxes().forEach(cb => cb.classList.add('hidden'));
+    picking = false;
+    $('dialog').classList.add('hidden');
+    $('cancelBtn').classList.add('hidden');
+    $('selCount').classList.add('hidden');
+    $('createBtn').textContent = 'create playlist';
+    $('createBtn').classList.remove('hidden');
+  } catch (err) {
+    setNote('request failed: ' + err.message, 'err');
+    $('confirmBtn').disabled = false;
+  }
+});
+
+// --- account ---
+async function loadAuth() {
+  auth = await (await fetch('/me')).json();
+  const el = $('account');
+  el.innerHTML = '';
+  if (!auth.configured) { el.textContent = 'spotify not configured'; return; }
+  if (auth.loggedIn) {
+    el.append(document.createTextNode(auth.displayName + ' · '));
+    const out = document.createElement('button');
+    out.textContent = 'log out';
+    out.addEventListener('click', async () => {
+      await fetch('/logout', { method: 'POST' });
+      loadAuth();
+    });
+    el.appendChild(out);
+  } else {
+    const a = document.createElement('a');
+    a.href = '/login';
+    a.textContent = 'log in with spotify';
+    el.appendChild(a);
+  }
+}
+loadAuth();
+
+// --- top words ---
+async function loadWords() {
+  const el = $('view-words');
+  el.textContent = 'counting…';
+  const data = await (await fetch('/topWords?limit=150')).json();
+  meta.textContent = 'most common words across ' + data.songsWithLyrics + ' songs with lyrics';
+  const table = document.createElement('table');
+  table.innerHTML = '<tr><th></th><th>word</th><th class="num">songs</th><th class="num">plays</th></tr>';
+  data.words.forEach((w, i) => {
+    const tr = document.createElement('tr');
+    const rank = document.createElement('td'); rank.textContent = i + 1;
+    const word = document.createElement('td');
+    const a = document.createElement('span');
+    a.className = 'wordlink'; a.textContent = w.word;
+    a.addEventListener('click', () => search(w.word));
+    word.appendChild(a);
+    const songs = document.createElement('td'); songs.className = 'num'; songs.textContent = w.songs;
+    const plays = document.createElement('td'); plays.className = 'num'; plays.textContent = w.plays;
+    tr.append(rank, word, songs, plays);
+    table.appendChild(tr);
+  });
+  el.innerHTML = '';
+  el.appendChild(table);
+}
+
+// --- stats ---
+async function loadStats() {
+  const el = $('view-stats');
+  el.textContent = 'loading…';
+  const s = await (await fetch('/stats')).json();
+  meta.textContent = s.plays + ' plays · ' + s.hours + ' hours · ' + s.tracks + ' songs · ' + s.artists + ' artists';
+  el.innerHTML = '';
+
+  const h1 = document.createElement('h2'); h1.textContent = 'most listened songs';
+  const t1 = document.createElement('table');
+  t1.innerHTML = '<tr><th></th><th>song</th><th>artist</th><th class="num">plays</th><th class="num">minutes</th></tr>';
+  s.topSongs.forEach((x, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + (i + 1) + '</td><td></td><td></td><td class="num">' + x.plays +
+      '</td><td class="num">' + x.minutes + '</td>';
+    tr.children[1].textContent = x.track;
+    tr.children[2].textContent = x.artist;
+    t1.appendChild(tr);
+  });
+
+  const h2 = document.createElement('h2'); h2.textContent = 'most listened artists';
+  const t2 = document.createElement('table');
+  t2.innerHTML = '<tr><th></th><th>artist</th><th class="num">songs</th><th class="num">plays</th><th class="num">hours</th></tr>';
+  s.topArtists.forEach((x, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + (i + 1) + '</td><td></td><td class="num">' + x.songs +
+      '</td><td class="num">' + x.plays + '</td><td class="num">' + x.hours + '</td>';
+    tr.children[1].textContent = x.artist;
+    t2.appendChild(tr);
+  });
+
+  el.append(h1, t1, h2, t2);
+}
+</script>
+</body>
+</html>
