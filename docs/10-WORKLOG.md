@@ -153,3 +153,41 @@ half-decoupled and untested would be a step backwards.
 
 **Result:** ✅ `core` now owns matching/search/ingest/lyrics; app behavior unchanged.
 Ready for Step 4 (`StorageAdapter` interface + `SqliteAdapter`).
+
+---
+
+## 2026-07-27 — Phase 0, Step 4: `StorageAdapter` contract + `SqliteAdapter` ✅
+
+**Why:** put all persistence behind one abstraction so `core`/hosts never depend on a
+concrete DB (Dependency Inversion), and both editions' adapters are interchangeable
+(Liskov). This sets up Step 5, where the host stops touching SQL directly.
+
+**What we did:**
+- `packages/core/src/storage.js` — the `StorageAdapter` base class: JSDoc typedefs
+  for row shapes + method stubs that throw `"...not implemented"` (fail-loud). Methods
+  grouped by concern: ingest / search+read / lyrics / spotify-auth / lifecycle
+  (Interface Segregation). Added to `index.js` and the `exports` map (`./storage`).
+- `apps/personal/src/sqlite-adapter.js` — `SqliteAdapter extends StorageAdapter`,
+  owns the `DatabaseSync` connection, WAL/FK pragmas, and the full schema (tracks,
+  lyrics, FTS5, auth — auth was previously created in `spotify.js`). Implements every
+  method by relocating the exact SQL from `db.js`/`server.js`/`ingest.js`/`lyrics.js`/
+  `spotify.js`. `upsertSongs` wraps its loop in BEGIN/COMMIT with ROLLBACK on error
+  (Atomicity). Constructor takes `(dataDir, {readOnly})` so reads can run against the
+  real DB without risk.
+- **Host NOT rewired yet** — the app still runs on the old direct-SQL `db.js` path.
+  The adapter is new and, until Step 5, unused by the running app. To avoid shipping
+  unverified "dead" code, it was tested independently (below).
+
+**Verification — 12/12 green** (scratchpad `adapter_test.js`):
+- **7 read methods:** rebuilt each HTTP response (`/searchForWord` ×3, `/stats`,
+  `/status`, `/topWords`, `/song/1`) from `adapter + core` exactly as the Step-5 host
+  will, and compared to the Step-1 baseline → **all 7 byte-for-byte identical.** This
+  proves the upcoming host swap changes nothing.
+- **upsertSongs:** ran against a temp copy → `tracks` table **identical to the real DB
+  row-for-row** (same hash + IDs).
+- **saveLyrics:** persisted + FTS-indexed + searchable, snippet highlighted `[[doorway]]`.
+- **setSongUri:** persisted. **auth:** saveTokens+setAuthUser round-trip, clearAuth → null.
+- **Running app unchanged:** started `server.js`, `/status` = 4044/4044, `door` = 154.
+
+**Result:** ✅ Adapter fully implemented and independently verified. Step 5 can swap the
+host onto it with high confidence, and extract Spotify at the same time.

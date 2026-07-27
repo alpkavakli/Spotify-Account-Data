@@ -10,7 +10,8 @@
     "./matching": "./src/matching.js",
     "./ingest": "./src/ingest.js",
     "./lyrics": "./src/lyrics.js",
-    "./search": "./src/search.js"
+    "./search": "./src/search.js",
+    "./storage": "./src/storage.js"
   },
   "files": [
     "src"

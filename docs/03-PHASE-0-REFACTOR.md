@@ -72,7 +72,7 @@ same shape later (Liskov). Grouped by concern (Interface Segregation).
 - [x] Step 1 — smoke-test baseline (see `10-WORKLOG.md`, 2026-07-27)
 - [x] Step 2 — scaffold workspaces (see `10-WORKLOG.md`, 2026-07-27)
 - [x] Step 3 — extract `core` (matching, search, ingest, lyrics) (see `10-WORKLOG.md`, 2026-07-27)
-- [ ] Step 4 — `storage.js` + `sqlite-adapter.js`
+- [x] Step 4 — `storage.js` + `sqlite-adapter.js` (see `10-WORKLOG.md`, 2026-07-27)
 - [ ] Step 5 — rewire host **+ extract & rewire `spotify`**
 - [ ] Step 6 — verify + ops paths
 

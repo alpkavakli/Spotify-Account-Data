@@ -12,4 +12,5 @@ module.exports = {
   ingest: require("./ingest"),
   lyrics: require("./lyrics"),
   search: require("./search"),
+  storage: require("./storage"),
 };
