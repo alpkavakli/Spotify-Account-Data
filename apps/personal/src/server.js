@@ -11,8 +11,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
-// The UI lives in the sibling Frontend/ folder, served as static files.
-app.use(express.static(path.join(__dirname, "..", "..", "Frontend")));
+// The UI lives in the sibling frontend/ folder, served as static files.
+app.use(express.static(path.join(__dirname, "..", "frontend")));
 
 // FTS5 has its own query syntax (AND, OR, *), so user input is wrapped in
 // quotes per word to make it behave like a plain word search.

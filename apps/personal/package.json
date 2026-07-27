@@ -1,9 +1,8 @@
 {
-  "name": "backend",
+  "name": "@lyricsearch/personal",
   "version": "1.0.0",
-  "description": "Search your Spotify history by lyrics and build playlists from the matches",
+  "description": "Personal Edition — search your Spotify export by lyrics and build playlists from the matches. Self-hosted, single-user, SQLite.",
   "license": "ISC",
-  "author": "",
   "type": "commonjs",
   "main": "src/server.js",
   "engines": {

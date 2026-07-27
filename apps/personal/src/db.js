@@ -4,7 +4,7 @@ const { DatabaseSync } = require("node:sqlite");
 
 const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
-  : path.resolve(__dirname, "..", "..", "Data");
+  : path.resolve(__dirname, "..", "Data");
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 

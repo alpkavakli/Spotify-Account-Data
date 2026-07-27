@@ -68,7 +68,7 @@ same shape later (Liskov). Grouped by concern (Interface Segregation).
 
 ## Status
 - [x] Step 1 — smoke-test baseline (see `10-WORKLOG.md`, 2026-07-27)
-- [ ] Step 2 — scaffold workspaces
+- [x] Step 2 — scaffold workspaces (see `10-WORKLOG.md`, 2026-07-27)
 - [ ] Step 3 — extract `core`
 - [ ] Step 4 — `storage.js` + `sqlite-adapter.js`
 - [ ] Step 5 — rewire host

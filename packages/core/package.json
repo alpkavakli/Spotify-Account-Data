@@ -1,0 +1,11 @@
+{
+  "name": "@lyricsearch/core",
+  "version": "0.0.0",
+  "description": "Storage- and HTTP-agnostic domain logic shared by every edition (matching, ingest, lyrics, search, spotify).",
+  "license": "ISC",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "files": [
+    "src"
+  ]
+}

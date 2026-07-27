@@ -1,0 +1,17 @@
+# Personal Edition — self-contained ignore rules (travels with the public split).
+
+# dependencies (hoisted to the monorepo root in dev, but ignore here too)
+node_modules/
+
+# secrets
+.env
+
+# personal Spotify export + everything derived from it — keep the folder, not its contents
+Data/*
+!Data/.gitkeep
+!Data/README.md
+
+# sqlite database (built locally from your own data)
+*.db
+*.db-shm
+*.db-wal

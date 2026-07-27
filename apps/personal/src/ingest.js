@@ -4,7 +4,7 @@ const { db, matchKey } = require("./db");
 
 const EXPORT_DIR = process.env.EXPORT_DIR
   ? path.resolve(process.env.EXPORT_DIR)
-  : path.resolve(__dirname, "..", "..", "Data");
+  : path.resolve(__dirname, "..", "Data");
 
 function readJson(name) {
   const file = path.join(EXPORT_DIR, name);

@@ -56,3 +56,47 @@ for Step 2 (scaffold workspaces).
 **Note for verification:** after the refactor, re-run the same requests and compare
 sha256s. If ordering-sensitive files differ, diff the JSON to confirm the delta is
 only ordering vs. a real behavior change.
+
+---
+
+## 2026-07-27 — Phase 0, Step 2: scaffold monorepo + relocate app ✅
+
+**Why:** turn the flat `Backend/` + `Frontend/` layout into an npm-workspaces
+monorepo so `core` (Step 3) can be a real shared package. Pure relocation — no
+domain-logic changes.
+
+**What we did:**
+- Created workspace root `package.json` (`"private": true`, `workspaces: ["packages/*","apps/*"]`, engines node>=24, convenience scripts that delegate to the personal app).
+- Created `packages/core/` (package `@lyricsearch/core`, `src/index.js` placeholder exporting `{}` — filled in Step 3).
+- Moved the app into `apps/personal/` (`@lyricsearch/personal`):
+  - `Backend/src` → `apps/personal/src`
+  - `Frontend/` → `apps/personal/frontend` (lowercased)
+  - `Data/` → `apps/personal/Data` (real export + `spotify.db` moved with it; git-ignored)
+  - `Backend/.env.example`, `docker-entrypoint.sh` → `apps/personal/`
+  - `Dockerfile`, `docker-compose.yml`, `.dockerignore` → `apps/personal/` (**NOT yet rewritten — see Step 6**)
+- Adjusted relative-path defaults for the new depth (mechanical, not behavioral):
+  `db.js` `DATA_DIR` and `ingest.js` `EXPORT_DIR` `../../Data` → `../Data`;
+  `server.js` static `../../Frontend` → `../frontend`. The dotenv path `../.env` was
+  already correct.
+- `.gitignore`: root Data rule re-pointed to `apps/personal/Data/*`; added a
+  self-contained `apps/personal/.gitignore` (travels with the future public split).
+- Removed `Backend/package.json`, `package-lock.json`, `node_modules`. Seeded the old
+  lockfile at root and ran `npm install` → workspace-aware lockfile + hoisted
+  `node_modules` (71 packages, 0 vulnerabilities).
+
+**Verification:** started via root `npm start` (delegates to `@lyricsearch/personal`),
+found the relocated DB, re-ran all 8 baseline requests. **All 8 sha256s matched the
+Step-1 baseline byte-for-byte.** ✅ No behavior change.
+
+**Known leftovers / deferred:**
+- `Backend/.claude/settings.local.json` could not be removed (safety classifier blocks
+  deleting `.claude` paths). It is git-ignored and inert (active Claude config is at
+  repo root). **User can delete the now-empty `Backend/` folder manually.**
+- Docker files were relocated but **not corrected** — they still reference the old
+  `Backend/`/`Frontend/` layout and were never built. Rewriting them is **Step 6**,
+  after `core` extraction settles the final layout.
+- `ejs` is still a dependency but appears unused (server serves static files). Leave
+  for now; prune in a later cleanup.
+
+**Result:** ✅ Monorepo scaffolded, app runs identically from `apps/personal`. Ready
+for Step 3 (extract `core`).

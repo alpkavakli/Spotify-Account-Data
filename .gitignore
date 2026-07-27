@@ -14,10 +14,10 @@ node_modules/
 
 # ─── personal Spotify export + everything derived from it ───
 # Keep the Data/ folder in the repo but never its contents. Each user drops
-# their own export in here (see Data/README.md).
-Data/*
-!Data/.gitkeep
-!Data/README.md
+# their own export in here (see apps/personal/Data/README.md).
+apps/personal/Data/*
+!apps/personal/Data/.gitkeep
+!apps/personal/Data/README.md
 
 # ─── sqlite database (built locally from your own data) ───
 *.db

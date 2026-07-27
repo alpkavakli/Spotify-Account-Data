@@ -1,0 +1,21 @@
+{
+  "name": "spotify-lyric-search",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Search your Spotify data by song lyrics. Monorepo: shared core + editions.",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "start": "npm start --workspace @lyricsearch/personal",
+    "ingest": "npm run ingest --workspace @lyricsearch/personal",
+    "lyrics": "npm run lyrics --workspace @lyricsearch/personal",
+    "setup": "npm run setup --workspace @lyricsearch/personal"
+  }
+}
