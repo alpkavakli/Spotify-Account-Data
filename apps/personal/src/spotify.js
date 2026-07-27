@@ -1,4 +1,7 @@
-const { db, normalize, cleanTitle } = require("./db");
+const { db } = require("./db");
+// Full Spotify extraction into @lyricsearch/core lands in Phase 0 Step 5, once the
+// StorageAdapter owns token storage. For now only the pure matching helpers move.
+const { normalize, cleanTitle } = require("@lyricsearch/core/matching");
 
 const AUTH_URL = "https://accounts.spotify.com/authorize";
 const TOKEN_URL = "https://accounts.spotify.com/api/token";

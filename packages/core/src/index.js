@@ -1,9 +1,15 @@
-// @lyricsearch/core — shared domain logic.
+// @lyricsearch/core — storage- and HTTP-agnostic domain logic.
 //
-// Placeholder entry point. Phase 0 Step 3 fills this package with the pure,
-// storage-agnostic modules (matching, ingest, lyrics, search, spotify) extracted
-// from apps/personal. Until then this exports nothing.
+// Import a single concern via its subpath (preferred, keeps coupling narrow):
+//   const { matchKey } = require("@lyricsearch/core/matching");
+// ...or the whole namespaced surface:
+//   const core = require("@lyricsearch/core");  core.matching.matchKey(...)
 //
-// See docs/03-PHASE-0-REFACTOR.md.
+// See docs/03-PHASE-0-REFACTOR.md. (spotify module lands in Step 5.)
 
-module.exports = {};
+module.exports = {
+  matching: require("./matching"),
+  ingest: require("./ingest"),
+  lyrics: require("./lyrics"),
+  search: require("./search"),
+};

@@ -100,3 +100,56 @@ Step-1 baseline byte-for-byte.** ✅ No behavior change.
 
 **Result:** ✅ Monorepo scaffolded, app runs identically from `apps/personal`. Ready
 for Step 3 (extract `core`).
+
+---
+
+## 2026-07-27 — Phase 0, Step 3: extract `core` (matching, search, ingest, lyrics) ✅
+
+**Why:** move the storage-/HTTP-agnostic domain logic into `@lyricsearch/core` so
+both editions can share it (Dependency Inversion). `apps/personal` keeps only the
+SQLite + Express glue.
+
+**Scope decision:** extracted the four modules verifiable without Spotify creds and
+rewired the app to use them. **`spotify` intentionally deferred to Step 5** — its
+pure logic is tangled with token storage, so it only becomes clean once the
+`StorageAdapter` exists, and it can't be tested end-to-end without creds. Shipping it
+half-decoupled and untested would be a step backwards.
+
+**What we did:**
+- Created `packages/core/src/`:
+  - `matching.js` — `normalize`, `cleanTitle`, `matchKey` (verbatim).
+  - `search.js` — `toFtsQuery`, `countOccurrences`, `STOPWORDS`, and a pure
+    `aggregateTopWords(rows, limit)`.
+  - `ingest.js` — pure `buildSongs({library, playlists, histories})` → canonical song
+    list + stats. No fs, no DB.
+  - `lyrics.js` — LRCLIB client (`searchLrclib` w/ backoff, `pickBest`) + a
+    `fetchLyrics(artist, track)` → `{status, source, body}`. No DB.
+  - `index.js` namespaces the four; `package.json` adds a subpath `exports` map so
+    consumers import narrowly, e.g. `require("@lyricsearch/core/matching")`
+    (Interface Segregation).
+- Rewired `apps/personal`:
+  - `db.js` → pure database (dropped the matching functions; exports `{db, DATA_DIR}`).
+  - `ingest.js` → reads files (fs) + writes DB in one transaction, merge via
+    `core.buildSongs`.
+  - `lyrics.js` → keeps DB persistence + concurrency + politeness delay, fetch via
+    `core.fetchLyrics`.
+  - `server.js` → search endpoints + top-words use `core.search`.
+  - `spotify.js` → import line only: matching now from `core` (rest untouched).
+  - `apps/personal/package.json` → depends on `@lyricsearch/core` (`"*"`); `npm install`
+    symlinked the workspace.
+
+**Verification (all green):**
+1. **HTTP baseline** — restarted server, re-ran all 8 endpoints: **all 8 sha256s match
+   the Step-1 baseline byte-for-byte.** (covers matching + search + stats + top-words)
+2. **Ingest** — ran the new ingest against a *temp copy* of the export
+   (`4044 unique songs`) and compared the `tracks` table to the real DB row-for-row:
+   **identical hash `a1d01b0f…`, same IDs.** (real DB never touched)
+3. **Lyrics CLI** — ran on the real DB: `nothing to fetch — all tracks processed`,
+   `ok=3714 instrumental=144 notfound=186`. Wiring intact.
+4. **Live client** — `core.fetchLyrics("The Strokes", "Ode To The Mets - 2020 Remaster")`
+   → `status: ok, source: lrclib, 1412 chars` ("Up on his horse…"). Extracted LRCLIB
+   client works against the network.
+5. **Grep** — no stale references to moved functions; all resolve to `core`.
+
+**Result:** ✅ `core` now owns matching/search/ingest/lyrics; app behavior unchanged.
+Ready for Step 4 (`StorageAdapter` interface + `SqliteAdapter`).

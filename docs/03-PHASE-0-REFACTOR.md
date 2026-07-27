@@ -56,8 +56,10 @@ same shape later (Liskov). Grouped by concern (Interface Segregation).
    Phase 2, when the SDA is registered.)
 2. **Scaffold workspaces** — root `package.json`, `packages/core`, `apps/personal`;
    move files; keep everything runnable.
-3. **Extract pure logic into `core`** (`matching`, `search`, `lyrics` client,
-   `spotify` client) — no DB touched.
+3. **Extract pure logic into `core`** (`matching`, `search`, `ingest` merge,
+   `lyrics` client) — no DB touched. **`spotify` deferred to Step 5** (its logic
+   is entangled with token *storage*, so it becomes clean only once the adapter
+   exists — and it's the one piece untestable without Spotify creds).
 4. **Write `storage.js`** (contract) + **`sqlite-adapter.js`** (current SQL behind it).
 5. **Rewire** `server.js`, `ingest.js`, `lyrics.js` to use `core` + the adapter.
 6. **Re-run the same smoke tests** — output must match step 1. Update Dockerfile /
@@ -69,9 +71,9 @@ same shape later (Liskov). Grouped by concern (Interface Segregation).
 ## Status
 - [x] Step 1 — smoke-test baseline (see `10-WORKLOG.md`, 2026-07-27)
 - [x] Step 2 — scaffold workspaces (see `10-WORKLOG.md`, 2026-07-27)
-- [ ] Step 3 — extract `core`
+- [x] Step 3 — extract `core` (matching, search, ingest, lyrics) (see `10-WORKLOG.md`, 2026-07-27)
 - [ ] Step 4 — `storage.js` + `sqlite-adapter.js`
-- [ ] Step 5 — rewire host
+- [ ] Step 5 — rewire host **+ extract & rewire `spotify`**
 - [ ] Step 6 — verify + ops paths
 
 See `10-WORKLOG.md` for actual results as each step completes.
