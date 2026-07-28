@@ -112,14 +112,20 @@ must not be a set of working login links.
 `Alp@Example.com` and `alp@example.com` are one account. Without it, a
 passwordless login link silently creates a second account for the same person.
 
-## Known issue for Step 4: `bigint` arrives as a string
+## `bigint` arrives as a string — resolved
 
 `node-postgres` returns `int8` as a **string** (to avoid silent precision loss
-past 2⁵³). The conformance suite requires numbers — the routes do arithmetic on
-these — so `PostgresAdapter` must cast in SQL (`ms_played::float8`) or register a
-type parser. Recorded here because it is exactly the kind of difference the
-conformance suite exists to catch, and it is already known before the adapter is
-written.
+past 2⁵³). The conformance suite requires numbers, because the routes do
+arithmetic on them. `PostgresAdapter` fixes this in two places:
+
+- a process-wide type parser, `types.setTypeParser(INT8, Number)` — our int8
+  values are row ids and millisecond totals, at most ~10¹³, three orders of
+  magnitude below where doubles start losing integers
+- `::float8` casts on aggregates, because `SUM()` over an integer column returns
+  `numeric`, which node-postgres also stringifies
+
+This was found *before* the adapter was written because the conformance suite
+asserts `typeof === "number"` and not just the value.
 
 ## Migrations
 
@@ -139,7 +145,7 @@ Forward-only, plain `.sql`, applied in filename order by
 ```bash
 npm run db:up   --workspace @lyricsearch/web   # start Postgres (docker, port 5433)
 npm run migrate --workspace @lyricsearch/web   # apply migrations
-npm test        --workspace @lyricsearch/web   # 45 tests against real Postgres
+npm test        --workspace @lyricsearch/web   # 115 tests against real Postgres
 ```
 
 The tests run against a **real** Postgres, never a mock — the entire point is to

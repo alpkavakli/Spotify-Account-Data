@@ -69,7 +69,7 @@ apps/web/                      NEW — the hosted service
 - [x] Step 1 — test suite + `createApp` factory (see `10-WORKLOG.md`, 2026-07-27)
 - [x] Step 2 — async `StorageAdapter` (see `10-WORKLOG.md`, 2026-07-27)
 - [x] Step 3 — Postgres schema + migrations (see `10-WORKLOG.md`, 2026-07-28; model documented in `06-DATA-MODEL.md`)
-- [ ] Step 4 — `PostgresAdapter` passing the conformance suite
+- [x] Step 4 — `PostgresAdapter` passing the conformance suite (see `10-WORKLOG.md`, 2026-07-28)
 - [ ] Step 5 — `apps/web` API + accounts + upload intake
 - [ ] Step 6 — pg-boss worker
 - [ ] Step 7 — Next.js frontend

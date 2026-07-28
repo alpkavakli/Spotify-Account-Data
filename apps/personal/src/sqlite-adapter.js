@@ -148,7 +148,21 @@ class SqliteAdapter extends StorageAdapter {
   }
 
   // ── search & read ──
-  async searchByLyrics(ftsQuery) {
+
+  /**
+   * Words -> an FTS5 MATCH expression.
+   *
+   * FTS5 has its own query language (AND, OR, NEAR, *), so each word is wrapped
+   * in double quotes to make it a literal term; space-separated terms are an
+   * implicit AND. Quoting is also what makes user input safe here — an
+   * unquoted `AND` or `(` is a syntax error, not a search.
+   */
+  #ftsQuery(words) {
+    return words.map((w) => `"${String(w).replace(/"/g, "")}"`).join(" ");
+  }
+
+  async searchByLyrics(words) {
+    const ftsQuery = this.#ftsQuery(words);
     return this.db
       .prepare(
         `SELECT t.id, t.artist, t.track, t.album, t.uri, t.play_count, t.stream_count,

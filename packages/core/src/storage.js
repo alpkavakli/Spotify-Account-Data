@@ -63,8 +63,12 @@ class StorageAdapter {
   async upsertSongs(songs) { throw new Error("StorageAdapter.upsertSongs not implemented"); }
 
   // ── search & read ──
-  /** @param {string} ftsQuery @returns {SearchRow[]} (may throw on invalid FTS) */
-  async searchByLyrics(ftsQuery) { throw new Error("StorageAdapter.searchByLyrics not implemented"); }
+  /** Find songs whose lyrics contain ALL of these words (stemmed).
+   *  Takes plain words from core.search.queryWords — building the engine's
+   *  actual query expression is the adapter's job, because FTS5 and tsquery
+   *  have nothing in common.
+   *  @param {string[]} words @returns {SearchRow[]} */
+  async searchByLyrics(words) { throw new Error("StorageAdapter.searchByLyrics not implemented"); }
   /** @param {number} id @returns {object|null} full song + lyric status/body */
   async getSong(id) { throw new Error("StorageAdapter.getSong not implemented"); }
   /** @param {number[]} ids @returns {{id:number,artist:string,track:string,uri:string|null}[]} */

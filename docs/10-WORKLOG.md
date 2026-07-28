@@ -646,3 +646,98 @@ string for SQLite.
 **Next: Phase 1, Step 4** — `PostgresAdapter` implementing the same
 `StorageAdapter` contract, scoped to a `user_id`, and passing the same
 conformance suite as `SqliteAdapter`.
+
+---
+
+## 2026-07-28 — Phase 1, Step 4: `PostgresAdapter` ✅
+
+**The payoff step for the whole architecture.** `SqliteAdapter` and
+`PostgresAdapter` now pass the **same conformance suite**, so `core` and every
+route can hold either one without knowing which. The Liskov commitment in
+`01-DECISIONS.md` is now checked by execution rather than asserted in a document.
+
+### 4a — First, a leak in the contract had to be closed
+
+`searchByLyrics(ftsQuery)` took a string in **SQLite FTS5 syntax** (`"door"
+"open"`), built by `core.search.toFtsQuery`. That is a storage-engine detail
+living in `core`, and Postgres cannot use it — the first thing Step 4 would have
+had to do is parse SQLite syntax back into words.
+
+Fixed properly instead:
+- `core.search.toFtsQuery` → **`queryWords(q)`**, which returns plain words and
+  nothing else. `core` no longer knows any engine's query language.
+- **`SqliteAdapter` builds its own** FTS5 expression (`#ftsQuery`, quoting each
+  word); **`PostgresAdapter` builds a tsquery** via `plainto_tsquery`.
+- Contract, route, conformance suite and tests updated to pass `string[]`.
+
+An unplanned benefit: **invalid search queries are now impossible**. Searching
+for `AND`, `(`, `*` or `&` used to be an FTS5 syntax error that the route caught
+and turned into a 400; both adapters now quote or escape user input themselves,
+so it is simply a search that finds what it finds. Covered by tests on both
+sides. (One of those tests failed at first because `["AND"]` legitimately
+*matches* — the fixture lyrics contain the word "and". The assertion was wrong,
+not the code.)
+
+### 4b — `apps/web/src/postgres-adapter.js`
+
+All 19 contract methods, **scoped to one user**. The constructor throws without a
+`userId`: an unscoped adapter would read across tenants, so there is no default.
+Tenant isolation lives in this one file and nowhere else, because no route writes
+SQL — leaking another user's data would require a bug in here, not a forgotten
+`WHERE` somewhere in the API.
+
+Things that needed care, most of them found by the conformance suite:
+
+- **`bigint` as string.** node-postgres returns `int8` as text. Fixed with a
+  process-wide `setTypeParser(INT8, Number)` plus `::float8` on aggregates
+  (`SUM()` over integers returns `numeric`, also stringified). Pre-registered in
+  Step 3 precisely because the suite asserts `typeof === "number"`.
+- **Two different "user ids".** The contract's `getAuth().user_id` means the
+  **Spotify** user — `core.spotify.createPlaylist(token, row.user_id, ...)` uses
+  it as a Spotify identifier. Our accounts also have a `user_id`. The adapter
+  aliases `spotify_user_id AS user_id`; returning our bigint would create
+  playlists against a Spotify account that does not exist. SQLite's single-row
+  `auth` table had no such ambiguity.
+- **`playlists` as a JSON string.** The contract says raw JSON array string
+  (the host `JSON.parse`s it); node-postgres parses `jsonb` into an object, so
+  the adapter selects `playlists::text`.
+- **`close()` is a no-op.** The pool is shared by the process and by every
+  tenant's adapter; ending it because one request finished would kill the next.
+  The conformance suite's `destroyAdapter` hook exists for exactly this.
+- **Atomicity across two tables.** `upsertSongs` writes global `songs` and
+  per-user `user_songs`; both run in one transaction, so a failed batch leaves no
+  orphan rows in the shared catalogue either. Set-based via `unnest()` — one
+  round trip per table rather than one per song, for ~4000-song ingests.
+- **No index maintenance.** `saveLyrics` just writes; `lyrics.body_tsv` is a
+  GENERATED column. The SQLite adapter has to DELETE and re-INSERT its FTS row by
+  hand.
+
+### Verification — 70 tests in the adapter file alone
+
+- **The full conformance suite passes on Postgres**, unchanged from the run
+  against SQLite. Same file, same assertions, two completely different engines.
+- **45 Postgres-specific tests** for behavior SQLite cannot have: one tenant
+  never sees another's songs, stats, search results or lyric counts; guessing
+  another tenant's song id returns `null`; a shared song is stored **once**
+  with independent per-user counts; **lyrics fetched by one user serve every
+  other user who owns that song** (and the second user is never asked to
+  re-fetch); a resolved Spotify URI is shared globally but cannot be written by
+  someone who does not own the song; account deletion erases the tenant and
+  leaves both the catalogue and the other tenant intact; 3.7e9 ms round-trips;
+  tsquery operators are neutralised.
+
+**A finding worth recording:** `testing/fixtures.js` `seed()` can only be used
+**once per database** in the hosted model. It learns song ids from
+`getSongsNeedingLyrics()`, which correctly returns nothing for a second tenant
+once the lyrics exist — because lyrics are global. The first version of the
+account-deletion test called `seed()` twice and failed with `bigint: "NaN"`.
+That is the shared-catalogue design working exactly as intended; the fixture doc
+now says so, and a second tenant should call `upsertSongs(SONGS)` and inherit the
+lyrics.
+
+**Repo total: 362 tests, 0 failures** (core 133, personal 114, web 115).
+
+**Next: Phase 1, Step 5** — `apps/web` HTTP API: passwordless accounts,
+sessions, upload intake behind a `BlobStore`, and the read routes on top of
+`PostgresAdapter`. The routes should be close to a copy of `apps/personal/src/
+app.js`, because that is what the shared contract was for.

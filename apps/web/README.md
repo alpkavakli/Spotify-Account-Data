@@ -4,8 +4,9 @@ The multi-tenant SaaS edition. Shares all domain logic with the Personal Edition
 through `@lyricsearch/core`; the only differences are the storage adapter
 (Postgres instead of SQLite) and the host.
 
-**Status: Phase 1, step 3 of 7.** The database schema and migration runner exist.
-The adapter, API, worker and frontend do not yet — see
+**Status: Phase 1, step 4 of 7.** The schema, migration runner and
+`PostgresAdapter` exist; the adapter passes the same conformance suite as
+`SqliteAdapter`. The HTTP API, worker and frontend do not yet — see
 [`docs/05-PHASE-1-SAAS.md`](../../docs/05-PHASE-1-SAAS.md).
 
 ## Getting a database
@@ -13,7 +14,7 @@ The adapter, API, worker and frontend do not yet — see
 ```bash
 npm run db:up      # Postgres 17 in Docker, on port 5433
 npm run migrate    # apply migrations/*.sql
-npm test           # 45 tests against the real database
+npm test           # 115 tests against the real database
 npm run db:down    # stop it (data survives in the volume)
 ```
 
@@ -31,12 +32,24 @@ anything you care about.
 ```
 migrations/     forward-only .sql, applied in filename order
 src/
-  config.js     environment in one place
-  migrate.js    the migration runner (~80 lines, no framework)
+  config.js            environment in one place
+  migrate.js           the migration runner (~80 lines, no framework)
+  postgres-adapter.js  StorageAdapter over pg, scoped to one user
 test/
-  migrate.test.js   the runner: ordering, idempotency, rollback, locking
-  schema.test.js    the schema: tenant isolation, FTS, cascade deletes, types
+  migrate.test.js          the runner: ordering, idempotency, rollback, locking
+  schema.test.js           the schema: tenant isolation, FTS, cascades, types
+  postgres-adapter.test.js the shared conformance suite + multi-tenancy
 ```
+
+## The adapter
+
+`new PostgresAdapter(pool, { userId })` — **every instance is scoped to one
+user**, and the constructor throws without one. Tenant isolation lives in that
+file and nowhere else: no route writes SQL, so reading another user's data would
+take a bug in the adapter rather than a forgotten `WHERE`.
+
+It passes `@lyricsearch/core/testing/adapter-conformance` — the identical suite
+`SqliteAdapter` passes. That is what lets `core` and the routes hold either one.
 
 ## The data model
 
@@ -58,6 +71,10 @@ means LRCLIB is asked about each song exactly once across the whole user base.
   processes, and these helpers drop and recreate their database — two files
   sharing one name tear down each other's connections mid-test, and the failures
   look like schema bugs.
-- **`bigint` comes back from node-postgres as a string.** `ms_played` and
-  `spotify_accounts.expires_at` are `int8`. The `StorageAdapter` conformance
-  suite requires numbers, so the adapter must cast or register a type parser.
+- **`bigint` comes back from node-postgres as a string.** Handled in
+  `postgres-adapter.js` with `setTypeParser(INT8, Number)` plus `::float8` on
+  aggregates (`SUM()` over integers returns `numeric`, also stringified). If you
+  add a query returning an int8, check what type it arrives as.
+- **`fixtures.seed()` works once per database.** It learns ids from
+  `getSongsNeedingLyrics()`, which correctly returns nothing for a second tenant
+  because lyrics are global. A second tenant should `upsertSongs(SONGS)`.

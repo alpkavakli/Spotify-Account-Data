@@ -4,42 +4,49 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
-  toFtsQuery,
+  queryWords,
   countOccurrences,
   aggregateTopWords,
   STOPWORDS,
 } = require("../src/search");
 
-test.describe("toFtsQuery", () => {
-  test.it("quotes each word so FTS treats it as a literal, not an operator", () => {
-    assert.equal(toFtsQuery("door"), '"door"');
-    assert.equal(toFtsQuery("open door"), '"open" "door"');
+test.describe("queryWords", () => {
+  test.it("splits the search box into plain words", () => {
+    assert.deepEqual(queryWords("door"), ["door"]);
+    assert.deepEqual(queryWords("open door"), ["open", "door"]);
   });
 
-  test.it("neutralises FTS operators typed by the user", () => {
-    // Without quoting, a search for "AND" or "NEAR" is a syntax error, and
-    // "a OR b" would silently mean something the user did not ask for.
-    assert.equal(toFtsQuery("AND"), '"AND"');
-    assert.equal(toFtsQuery("a OR b"), '"a" "OR" "b"');
-    assert.equal(toFtsQuery("NEAR(x)"), '"NEAR(x)"');
+  test.it("returns words, not an engine query", () => {
+    // core must not know whether it is talking to SQLite or Postgres. Each
+    // adapter turns these words into FTS5 or a tsquery itself.
+    for (const w of queryWords("open door")) {
+      assert.doesNotMatch(w, /["&|:*]/, "core must not emit engine syntax");
+    }
   });
 
-  test.it("strips embedded double quotes so the generated query stays balanced", () => {
-    // An unbalanced quote is the one input that would make SQLite raise.
-    assert.equal(toFtsQuery('say "hello"'), '"say" "hello"');
-    assert.equal(toFtsQuery('a"b'), '"ab"');
+  test.it("passes operator-looking input straight through as words", () => {
+    // Neutralising them is the adapter's job, because what counts as an
+    // operator depends on the engine.
+    assert.deepEqual(queryWords("AND"), ["AND"]);
+    assert.deepEqual(queryWords("a OR b"), ["a", "OR", "b"]);
+    assert.deepEqual(queryWords("NEAR(x)"), ["NEAR(x)"]);
+  });
+
+  test.it("strips double quotes, which are an operator in both engines", () => {
+    assert.deepEqual(queryWords('say "hello"'), ["say", "hello"]);
+    assert.deepEqual(queryWords('a"b'), ["ab"]);
   });
 
   test.it("collapses arbitrary whitespace", () => {
-    assert.equal(toFtsQuery("  open   door  "), '"open" "door"');
-    assert.equal(toFtsQuery("open\tdoor\nwide"), '"open" "door" "wide"');
+    assert.deepEqual(queryWords("  open   door  "), ["open", "door"]);
+    assert.deepEqual(queryWords("open\tdoor\nwide"), ["open", "door", "wide"]);
   });
 
   test.it("returns null when there is nothing to search for", () => {
-    assert.equal(toFtsQuery(""), null);
-    assert.equal(toFtsQuery("   "), null);
-    assert.equal(toFtsQuery('"'), null);
-    assert.equal(toFtsQuery('""""'), null);
+    assert.equal(queryWords(""), null);
+    assert.equal(queryWords("   "), null);
+    assert.equal(queryWords('"'), null);
+    assert.equal(queryWords('""""'), null);
   });
 });
 

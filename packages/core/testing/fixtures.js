@@ -105,6 +105,14 @@ const LYRICS = new Map([
 
 /**
  * Load SONGS + LYRICS into any StorageAdapter.
+ *
+ * Use it ONCE per database. It learns the song ids from
+ * getSongsNeedingLyrics(), which by definition returns nothing once the lyrics
+ * exist — and in the hosted service lyrics are GLOBAL, so a second tenant
+ * calling seed() on the same database gets an empty id map. That is the shared
+ * catalogue working as designed; a second tenant should call upsertSongs(SONGS)
+ * and inherit the lyrics the first one fetched.
+ *
  * @param {import("../src/storage").StorageAdapter} store
  * @returns {Promise<Map<string, number>>} match_key -> assigned song id
  */

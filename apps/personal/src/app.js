@@ -17,7 +17,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const express = require("express");
 const {
-  toFtsQuery,
+  queryWords,
   countOccurrences,
   aggregateTopWords,
 } = require("@lyricsearch/core/search");
@@ -39,12 +39,12 @@ function createApp({ store, spotify }) {
     const q = String(req.query.q || "").trim();
     if (!q) return res.status(400).json({ error: "missing query parameter: q" });
 
-    const ftsQuery = toFtsQuery(q);
-    if (!ftsQuery) return res.status(400).json({ error: "empty query" });
+    const words = queryWords(q);
+    if (!words) return res.status(400).json({ error: "empty query" });
 
     let rows;
     try {
-      rows = await store.searchByLyrics(ftsQuery);
+      rows = await store.searchByLyrics(words);
     } catch (err) {
       return res.status(400).json({ error: "invalid query" });
     }

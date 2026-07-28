@@ -73,20 +73,44 @@ test.describe("SqliteAdapter (backend-specific)", () => {
     }
   });
 
-  test.it("throws on malformed FTS syntax so the route can answer 400", async () => {
-    // core.toFtsQuery quotes user input precisely so this cannot happen from the
-    // UI, but the route still wraps the call in try/catch — this is the error it
-    // is catching.
-    //
-    // The index must be seeded first: with an empty lyrics_fts, SQLite never
-    // opens the FTS cursor and so never parses the match expression, and every
-    // one of these silently returns zero rows instead of raising.
+  test.it("neutralises FTS5 operators typed into the search box", async () => {
+    // FTS5 has its own query language, so a user searching for "AND" or "(" used
+    // to be a syntax error rather than a search. The adapter now quotes every
+    // word itself, which is why searchByLyrics takes plain words rather than a
+    // pre-built expression: the engine's syntax is the adapter's problem.
     const store = tempStore();
     try {
       await seed(store);
-      await assert.rejects(async () => store.searchByLyrics('"unterminated'));
-      await assert.rejects(async () => store.searchByLyrics("AND"));
-      await assert.rejects(async () => store.searchByLyrics("(unbalanced"));
+      for (const words of [["AND"], ["("], ["*"], ["NEAR"], ["a", "OR", "b"], ["^"], ['do"or']]) {
+        await assert.doesNotReject(
+          async () => store.searchByLyrics(words),
+          `${JSON.stringify(words)} must be a search, not a syntax error`
+        );
+      }
+    } finally {
+      await store.close();
+    }
+  });
+
+  test.it("treats an operator word as a word to look for", async () => {
+    // "and" is an FTS5 operator AND an English word that appears in the lyrics.
+    // Quoted, it searches for the word — which is what the user meant.
+    const store = tempStore();
+    try {
+      await seed(store);
+      const hits = await store.searchByLyrics(["AND"]);
+      assert.ok(hits.length > 0, "should find the songs whose lyrics say 'and'");
+      for (const r of hits) assert.match(r.body.toLowerCase(), /\band\b/);
+    } finally {
+      await store.close();
+    }
+  });
+
+  test.it("still finds real words after quoting", async () => {
+    const store = tempStore();
+    try {
+      await seed(store);
+      assert.equal((await store.searchByLyrics(["door"])).length, 2);
     } finally {
       await store.close();
     }

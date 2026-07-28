@@ -5,17 +5,27 @@
 // count occurrences for display, and aggregate the top-words report.
 
 /**
- * FTS5 has its own query syntax (AND, OR, *), so user input is wrapped in
- * quotes per word to make it behave like a plain word search.
- * Returns null when the query has no usable words.
+ * Split a user's search box into plain words.
+ *
+ * That is all `core` is allowed to do with a query. Turning words into an
+ * actual search expression is the STORAGE ENGINE'S job and differs completely
+ * between backends — SQLite wants FTS5 (`"open" "door"`), Postgres wants a
+ * tsquery — so each adapter builds its own from this list. Returning an
+ * engine-specific string from here would mean `core` knew which database it was
+ * talking to, which is exactly what the StorageAdapter exists to prevent.
+ *
+ * Double quotes are stripped because they are operators in both engines; every
+ * adapter then quotes or parameterises the words itself.
+ *
+ * @param {string} q
+ * @returns {string[]|null} the words, or null when there is nothing to search for
  */
-function toFtsQuery(q) {
+function queryWords(q) {
   const words = String(q)
     .split(/\s+/)
     .map((w) => w.replace(/"/g, "").trim())
     .filter(Boolean);
-  if (words.length === 0) return null;
-  return words.map((w) => `"${w}"`).join(" ");
+  return words.length === 0 ? null : words;
 }
 
 /**
@@ -83,4 +93,4 @@ function aggregateTopWords(rows, limit = 300) {
     .slice(0, limit);
 }
 
-module.exports = { toFtsQuery, countOccurrences, STOPWORDS, aggregateTopWords };
+module.exports = { queryWords, countOccurrences, STOPWORDS, aggregateTopWords };

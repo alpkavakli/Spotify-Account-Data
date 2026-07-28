@@ -165,7 +165,7 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
       });
 
       test.it("finds songs whose lyrics contain the word", async () => {
-        const rows = await store.searchByLyrics('"door"');
+        const rows = await store.searchByLyrics(["door"]);
         assert.deepEqual(
           rows.map((r) => r.track),
           ["Open Door", "Two Doors Down"]
@@ -175,7 +175,7 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
       test.it("stems — searching 'door' matches a body that only says 'doors'", async () => {
         // This is why the FTS index uses a porter stemmer. A Postgres adapter
         // must configure an equivalent stemming dictionary or this fails.
-        const rows = await store.searchByLyrics('"door"');
+        const rows = await store.searchByLyrics(["door"]);
         assert.ok(
           rows.some((r) => r.track === "Two Doors Down"),
           "plural-only body was not matched"
@@ -186,36 +186,36 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
         // play_count counts every play; stream_count counts only those past the
         // skip threshold. A backend that maps both to the same column passes
         // every other test in this suite and is still wrong.
-        const [row] = await store.searchByLyrics('"door"');
+        const [row] = await store.searchByLyrics(["door"]);
         assert.equal(row.play_count, 30);
         assert.equal(row.stream_count, 24);
       });
 
       test.it("orders by play_count descending", async () => {
-        const rows = await store.searchByLyrics('"door"');
+        const rows = await store.searchByLyrics(["door"]);
         const counts = rows.map((r) => r.play_count);
         assert.deepEqual(counts, [...counts].sort((a, b) => b - a));
         assert.equal(counts[0], 30);
       });
 
       test.it("excludes songs that do not contain the word", async () => {
-        const rows = await store.searchByLyrics('"door"');
+        const rows = await store.searchByLyrics(["door"]);
         assert.ok(!rows.some((r) => r.track === "Silent Field"));
       });
 
       test.it("returns no rows for a word nobody sings", async () => {
-        assert.deepEqual(await store.searchByLyrics('"xylophone"'), []);
+        assert.deepEqual(await store.searchByLyrics(["xylophone"]), []);
       });
 
       test.it("never returns songs without ok lyrics", async () => {
-        const rows = await store.searchByLyrics('"the"');
+        const rows = await store.searchByLyrics(["the"]);
         for (const r of rows) {
           assert.ok(r.body, `${r.track} came back with no lyric body`);
         }
       });
 
       test.it("returns every field the host renders, with the right types", async () => {
-        const [row] = await store.searchByLyrics('"door"');
+        const [row] = await store.searchByLyrics(["door"]);
         assert.equal(typeof row.id, "number");
         assert.equal(typeof row.artist, "string");
         assert.equal(typeof row.track, "string");
@@ -228,13 +228,13 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
       });
 
       test.it("returns playlists as a JSON array string (the host parses it)", async () => {
-        const [row] = await store.searchByLyrics('"door"');
+        const [row] = await store.searchByLyrics(["door"]);
         assert.equal(typeof row.playlists, "string");
         assert.deepEqual(JSON.parse(row.playlists), ["Morning"]);
       });
 
       test.it("marks the matched term in the snippet with [[ ]]", async () => {
-        const [row] = await store.searchByLyrics('"door"');
+        const [row] = await store.searchByLyrics(["door"]);
         assert.match(row.snippet, /\[\[/);
         assert.match(row.snippet, /\]\]/);
         assert.match(row.snippet.toLowerCase(), /\[\[door/);
@@ -365,7 +365,7 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
           source: "lrclib",
           body: "a corridor of doors and quiet rooms",
         });
-        const rows = await store.searchByLyrics('"corridor"');
+        const rows = await store.searchByLyrics(["corridor"]);
         assert.deepEqual(rows.map((r) => r.id), [id]);
       });
 
@@ -375,21 +375,21 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
         // host then counts occurrences against null.
         const id = ids.get(SONGS[0].match_key);
         await store.saveLyrics(id, { status: "notfound", source: null, body: null });
-        const rows = await store.searchByLyrics('"door"');
+        const rows = await store.searchByLyrics(["door"]);
         assert.ok(!rows.some((r) => r.id === id));
       });
 
       test.it("re-indexes the new body, not the old one", async () => {
         const id = ids.get(SONGS[0].match_key);
         await store.saveLyrics(id, { status: "ok", source: "lrclib", body: "lanterns only" });
-        assert.ok(!(await store.searchByLyrics('"door"')).some((r) => r.id === id));
-        assert.ok((await store.searchByLyrics('"lanterns"')).some((r) => r.id === id));
+        assert.ok(!(await store.searchByLyrics(["door"])).some((r) => r.id === id));
+        assert.ok((await store.searchByLyrics(["lanterns"])).some((r) => r.id === id));
       });
 
       test.it("does not index an instrumental (there is no body to index)", async () => {
         const id = ids.get(SONGS[0].match_key);
         await store.saveLyrics(id, { status: "instrumental", source: "lrclib", body: null });
-        assert.ok(!(await store.searchByLyrics('"door"')).some((r) => r.id === id));
+        assert.ok(!(await store.searchByLyrics(["door"])).some((r) => r.id === id));
         assert.equal((await store.getSong(id)).status, "instrumental");
       });
     });
