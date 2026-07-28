@@ -14,7 +14,9 @@
     "./storage": "./src/storage.js",
     "./spotify": "./src/spotify.js",
     "./testing/fixtures": "./testing/fixtures.js",
-    "./testing/adapter-conformance": "./testing/adapter-conformance.js"
+    "./testing/adapter-conformance": "./testing/adapter-conformance.js",
+    "./zip": "./src/zip.js",
+    "./testing/make-zip": "./testing/make-zip.js"
   },
   "files": [
     "src",

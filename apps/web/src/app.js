@@ -20,6 +20,7 @@ const {
 } = require("@lyricsearch/core/search");
 
 const { PostgresAdapter } = require("./postgres-adapter");
+const { NullQueue } = require("./queue");
 const auth = require("./auth");
 
 // An export zip is a few MB; the cap is generous but finite, because "no limit"
@@ -31,10 +32,18 @@ const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
  * @param {import("pg").Pool} deps.pool
  * @param {import("./blob-store").BlobStore} deps.blobStore
  * @param {import("./mailer").Mailer} deps.mailer
+ * @param {import("./queue").Queue} [deps.queue]  where upload parsing is handed off
  * @param {string} [deps.baseUrl]   used to build login links
  * @param {boolean} [deps.secureCookies]
  */
-function createApp({ pool, blobStore, mailer, baseUrl = "http://127.0.0.1:3001", secureCookies = false }) {
+function createApp({
+  pool,
+  blobStore,
+  mailer,
+  queue = new NullQueue(),
+  baseUrl = "http://127.0.0.1:3001",
+  secureCookies = false,
+}) {
   const app = express();
   app.set("trust proxy", true);
 
@@ -198,8 +207,12 @@ function createApp({ pool, blobStore, mailer, baseUrl = "http://127.0.0.1:3001",
         [req.userId, key, filename, req.body.length]
       );
 
-      // 202, not 200: the parsing happens in the worker (Step 6). Holding the
-      // request open for a multi-minute ingest is exactly what the queue is for.
+      // Enqueue AFTER the row is committed, or the worker can pick up a job
+      // for an upload it cannot see yet.
+      await queue.enqueueParseUpload(rows[0].id);
+
+      // 202, not 200: the parsing happens in the worker. Holding the request
+      // open for a multi-minute ingest is exactly what the queue is for.
       res.status(202).json({ upload: rows[0] });
     } catch (err) {
       if (err.type === "entity.too.large") {

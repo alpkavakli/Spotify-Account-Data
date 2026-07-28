@@ -13,5 +13,6 @@ module.exports = {
   lyrics: require("./lyrics"),
   search: require("./search"),
   storage: require("./storage"),
+  zip: require("./zip"),
   spotify: require("./spotify"),
 };

@@ -4,17 +4,22 @@ The multi-tenant SaaS edition. Shares all domain logic with the Personal Edition
 through `@lyricsearch/core`; the only differences are the storage adapter
 (Postgres instead of SQLite) and the host.
 
-**Status: Phase 1, step 5 of 7.** Schema, migrations, `PostgresAdapter`,
-passwordless accounts, upload intake and the read API all exist. The worker
-(which actually parses uploads) and the frontend do not yet — see
-[`docs/05-PHASE-1-SAAS.md`](../../docs/05-PHASE-1-SAAS.md).
+**Status: Phase 1, step 6 of 7.** The service works end to end: sign in, upload
+an export, and it is parsed, lyric-matched and searchable. Only the frontend is
+missing — see [`docs/05-PHASE-1-SAAS.md`](../../docs/05-PHASE-1-SAAS.md).
 
 ## Running it
 
+Two processes, in two terminals:
+
 ```bash
 npm run db:up      # Postgres in Docker
-npm start          # migrates, then listens on :3001
+npm start          # API: migrates, then listens on :3001
+npm run worker     # parses uploads and fills the lyric catalogue
 ```
+
+The API only ever *enqueues*; the worker is what does the work. Without it,
+uploads sit at `pending` forever — the API says so on startup.
 
 Sign-in links are **printed to the terminal** by `ConsoleMailer` — click one out
 of the log. The server refuses to start with `NODE_ENV=production` until a real
@@ -54,7 +59,7 @@ curl -b jar --data-binary @export.zip -H 'content-type: application/zip' \
 ```bash
 npm run db:up      # Postgres 17 in Docker, on port 5433
 npm run migrate    # apply migrations/*.sql
-npm test           # 170 tests against the real database
+npm test           # 201 tests against the real database
 npm run db:down    # stop it (data survives in the volume)
 ```
 
@@ -78,15 +83,34 @@ src/
   blob-store.js        BlobStore contract + LocalBlobStore (disk)
   mailer.js            Mailer contract + Console/Memory implementations
   auth.js              passwordless links and sessions (hashed, never raw)
+  queue.js             Queue contract + PgBossQueue + NullQueue (tests)
+  lyric-catalog.js     the GLOBAL lyric store — deliberately not per-tenant
+  jobs/parse-upload.js an export zip -> one user's library
+  jobs/fetch-lyrics.js LRCLIB -> the global catalogue
   app.js               the HTTP API, as a factory
   server.js            migrate, wire, listen
+  worker.js            pg-boss wiring for the two jobs
 test/
   migrate.test.js          the runner: ordering, idempotency, rollback, locking
   schema.test.js           the schema: tenant isolation, FTS, cascades, types
   postgres-adapter.test.js the shared conformance suite + multi-tenancy
   blob-store.test.js       round-trips, key generation, path traversal
   api.test.js              the API end-to-end, incl. cross-tenant isolation
+  jobs.test.js             both background jobs, called directly
 ```
+
+## The worker
+
+Two jobs, both plain async functions that take their dependencies —
+`worker.js` does the pg-boss wiring, so the jobs are testable without a queue and
+the queue stays swappable.
+
+- **`parse-upload`** claims its row (`WHERE status = 'pending'`), so a
+  redelivered job is a no-op rather than a double ingest. A bad file is recorded
+  on the row and **not** rethrown: retrying a corrupt zip corrupts it again.
+- **`fetch-lyrics`** is **global**. Songs are ordered by how many users are
+  waiting on them, so with a backlog the fetch that unblocks the most people
+  happens first. Each song is fetched **once, ever, for the whole user base**.
 
 ## The adapter
 

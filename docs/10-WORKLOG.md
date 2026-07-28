@@ -838,3 +838,105 @@ refused → logout sequence all behaved. The uploaded bytes were verified on dis
 **Next: Phase 1, Step 6** — the pg-boss worker: parse an upload into
 `core.ingest.buildSongs` → `upsertSongs`, and a **global** lyric fetcher that
 fills `lyrics` once per song for the whole user base.
+
+---
+
+## 2026-07-28 — Phase 1, Step 6: the worker ✅ (the service now works end to end)
+
+**Why:** uploads were being stored and never read. This is the step that turns
+the stored blob into a searchable library.
+
+### A dependency decision: reading zips
+
+Node has `zlib` (gzip/deflate) but no ZIP *container* reader, so this needed
+either a dependency or ~200 lines. We wrote it — `packages/core/src/zip.js` —
+and the reason is the threat model, not the dependency budget: this parses a file
+an anonymous user uploaded. Extraction libraries write to disk, which is where
+the entire **zip-slip** class of bugs lives (an entry named
+`../../etc/cron.d/x`). A reader that returns Buffers and never writes anything
+cannot have that bug.
+
+What it defends against, all tested: **zip bombs** (every inflate capped via
+zlib's `maxOutputLength`, plus a per-entry and total cap), **lying headers**
+(declared size checked against what actually inflated), **tampering** (CRC32
+verified), and pointless work (`filter` runs on the entry NAME, before any
+decompression). It **refuses** rather than guesses on zip64, encrypted entries
+and unknown compression methods — a Spotify export is none of those, and
+silently misreading a container is worse than failing.
+
+`readSpotifyExport()` matches on the **basename**, so the enclosing folder does
+not matter (Spotify nests the export; users re-zip things themselves), and skips
+`__MACOSX/._*` resource forks, which have the right basename and are not JSON.
+
+Tests build archives with a small ZIP **writer** (`core/testing/make-zip.js`)
+rather than a checked-in binary fixture — a fixture is opaque and cannot be
+varied, and this lets a test say "an entry with a lying size header" in one line.
+
+### The worker
+
+**`src/queue.js`** — a `Queue` interface with `PgBossQueue` and `NullQueue`. The
+API only ever *enqueues* and never imports pg-boss; the tests use `NullQueue` to
+assert that a route handed work off without running a queue.
+
+**`src/lyric-catalog.js`** — the global lyric store, **deliberately not a
+StorageAdapter**. That contract is per-tenant, and fetching lyrics is the one
+operation with no tenant. Forcing it through a user-scoped adapter would need a
+fake user or a "global mode" flag, either of which would make it possible to call
+a genuinely per-user method without a user. Pending songs are ordered by **how
+many users own them**, so with a backlog the fetch that unblocks the most people
+happens first.
+
+**`src/jobs/parse-upload.js`** — blob → `readSpotifyExport` →
+`core.ingest.buildSongs` → `upsertSongs` + `setMeta`. It **claims** its row
+(`UPDATE ... WHERE status = 'pending'`), because at-least-once is the only
+delivery guarantee a queue gives and a redelivered job must be a no-op rather
+than a double ingest. A bad upload is recorded on the row and **not rethrown**:
+that is the user's problem to see on the uploads page, not an incident, and
+retrying a corrupt zip corrupts it again.
+
+**`src/jobs/fetch-lyrics.js`** — global fetch, concurrency 4, 250 ms between
+requests. A song LRCLIB cannot answer for is recorded as `error` and the run
+continues.
+
+**`src/worker.js`** — a separate process from the API (`docs/02-SCALABILITY.md`):
+parsing a 20k-row export is minutes of work, and doing it in the web process
+would make request latency depend on who happened to upload something. Uploads
+trigger a lyric sweep, collapsed by `singletonKey` so a hundred simultaneous
+uploads cause one sweep, not a hundred. A cron schedule (`*/15`) catches
+stragglers. Batches re-queue themselves rather than draining the backlog in one
+run, so a restart loses little and one huge upload cannot monopolise the worker.
+
+### Verification — 478 tests, and a real end-to-end run
+
+`npm test`: **478 passing, 0 failures** (core 163, personal 114, web 201).
+
+- **`zip.test.js` (30):** stored and deflated archives, binary round-trip,
+  multi-block content, nested paths, archive comments, UTF-8 names; and the
+  refusals — bomb, size-cap, lying header, bad CRC, encrypted entry, unknown
+  method, zip64, truncation, central directory past EOF.
+- **`jobs.test.js` (29):** an export becomes a library with the right merge;
+  coverage window and skip threshold recorded; extended-history detected;
+  **re-running a job does not double-count**; a second upload adds without
+  duplicating; two users' identical exports produce two libraries and **one**
+  global song; every failure path lands a readable reason on the row and leaves
+  the library untouched; the catalogue orders by owner count; **one fetch serves
+  every user who owns the song** (asserted: exactly one HTTP call, both users can
+  then search it); misses are recorded so a song is never looked up twice.
+
+**Then run for real, both processes, against LRCLIB itself.** Uploaded an export
+containing three real songs:
+
+```
+parse-upload #1: done (3 songs)
+fetching lyrics for 3 song(s)
+lyrics: ok=3 notfound=0 instrumental=0 error=0
+catalogue: 3/3 songs processed, 0 pending
+```
+
+`/searchForWord?q=tear` then returned *Love Will Tear Us Apart* with 8
+occurrences and a `[[tear]]`-marked snippet — real lyrics, fetched from the real
+service, indexed by Postgres, searched through the shared `core`. A deliberately
+corrupt upload came back `failed | not a zip file (no end-of-central-directory
+record)` and left the library untouched.
+
+**Next: Phase 1, Step 7** — the Next.js frontend, the last step of Phase 1.

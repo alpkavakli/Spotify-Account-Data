@@ -13,6 +13,7 @@ const path = require("node:path");
 const { createApp } = require("../../src/app");
 const { LocalBlobStore } = require("../../src/blob-store");
 const { MemoryMailer } = require("../../src/mailer");
+const { NullQueue } = require("../../src/queue");
 
 const tempDirs = [];
 
@@ -31,11 +32,16 @@ async function startApi(pool) {
 
   const blobStore = new LocalBlobStore(blobDir);
   const mailer = new MemoryMailer();
+  // Records what would have been enqueued and runs nothing: these tests check
+  // that the route hands work off, not that a worker picks it up — the jobs
+  // have their own tests (test/jobs.test.js).
+  const queue = new NullQueue();
 
   const server = createApp({
     pool,
     blobStore,
     mailer,
+    queue,
     baseUrl: "http://127.0.0.1:0",
   }).listen(0);
   await once(server, "listening");
@@ -47,6 +53,7 @@ async function startApi(pool) {
     baseUrl,
     mailer,
     blobStore,
+    queue,
     client: makeClient(baseUrl),
     async close() {
       server.close();

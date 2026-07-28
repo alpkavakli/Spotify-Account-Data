@@ -305,6 +305,24 @@ test.describe("hosted API", { skip }, () => {
       assert.match(rows[0].blob_key, /^\d{4}-\d{2}\/[0-9a-f]{32}$/);
     });
 
+    test.it("hands the upload to the worker", async () => {
+      // The request only stores the file; parsing a 20k-row export belongs in
+      // the worker, which is why the response is 202 and not 200.
+      const client = await signIn(api, "queued@example.com");
+      api.queue.parseUploads.length = 0;
+
+      const res = await client.upload("/uploads", zip());
+      assert.deepEqual(api.queue.parseUploads, [res.body.upload.id]);
+    });
+
+    test.it("does not enqueue anything when the upload is rejected", async () => {
+      const client = await signIn(api, "notqueued@example.com");
+      api.queue.parseUploads.length = 0;
+
+      await client.upload("/uploads", Buffer.alloc(0));
+      assert.deepEqual(api.queue.parseUploads, []);
+    });
+
     test.it("rejects an empty body", async () => {
       const client = await signIn(api, "empty@example.com");
       const res = await client.upload("/uploads", Buffer.alloc(0));
