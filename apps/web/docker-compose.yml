@@ -1,0 +1,34 @@
+# Postgres for local development and for the integration tests.
+#
+#   docker compose up -d          start it
+#   npm run migrate               apply migrations
+#   npm test                      run the schema tests against it
+#   docker compose down           stop it (data survives in the volume)
+#   docker compose down -v        stop it and DELETE the data
+#
+# Port 5433, not the default 5432, so this never collides with a Postgres you
+# already have installed.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: lyricsearch-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lyricsearch
+      POSTGRES_PASSWORD: lyricsearch
+      POSTGRES_DB: lyricsearch
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The app and the test suite both wait on this, so it has to mean
+      # "ready for queries", not just "process started".
+      test: ["CMD-SHELL", "pg_isready -U lyricsearch -d lyricsearch"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:

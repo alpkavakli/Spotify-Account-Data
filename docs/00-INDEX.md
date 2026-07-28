@@ -14,9 +14,10 @@ without re-deriving anything.
 | 03 | [03-PHASE-0-REFACTOR.md](03-PHASE-0-REFACTOR.md) | The plan for extracting the shared `core` package and the `StorageAdapter` interface. **Complete.** |
 | 04 | [04-TESTING.md](04-TESTING.md) | How the project is tested: the three layers, the adapter conformance suite, how to test Express routes, and how to add a test. |
 | 05 | [05-PHASE-1-SAAS.md](05-PHASE-1-SAAS.md) | The plan for the hosted service on Postgres — step sequence and status. **The current active phase.** |
+| 06 | [06-DATA-MODEL.md](06-DATA-MODEL.md) | The hosted service's multi-tenant Postgres schema: global songs/lyrics, per-user play data, and why each column is the type it is. |
 | 10 | [10-WORKLOG.md](10-WORKLOG.md) | Running, append-only log of what we actually did, step by step, with results. |
 
-**Reading order for a new agent:** `PROJECT_PLAN.md` → `01` → `02` → `03` → `04` → `05` → `10`
+**Reading order for a new agent:** `PROJECT_PLAN.md` → `01` → `02` → `03` → `04` → `05` → `06` → `10`
 (then the newest entries in `10-WORKLOG.md` tell you where we are right now).
 
 _Convention: low numbers are stable reference; `10-WORKLOG.md` grows over time.

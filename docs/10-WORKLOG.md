@@ -542,3 +542,107 @@ warning section; `.env.example` documents `SKIP_THRESHOLD_SECONDS`.
 **Result:** ✅ the numbers are honest and the UI says what they cover. When the
 extended export arrives, dropping the files in and re-running `npm run ingest` is
 the whole migration.
+
+---
+
+## 2026-07-28 — Phase 1, Step 3: Postgres schema + migrations ✅
+
+**Why:** the SaaS needs a multi-tenant database before an adapter can be written
+against it. Building it first — and testing it against a real Postgres — means
+Step 4's `PostgresAdapter` is only a translation layer, not a place where schema
+design decisions get made by accident.
+
+### What we did
+
+**`apps/web/` workspace created** (`@lyricsearch/web`, private, deps: `pg` +
+`dotenv` + `@lyricsearch/core`). Picked up automatically by the root
+`workspaces: ["apps/*"]`.
+
+**`migrations/001_init.sql`** — the model from `PROJECT_PLAN.md §7`, now written
+out and commented: global `songs` + `lyrics`, per-user `user_songs` / `user_meta`
+/ `sessions` / `spotify_accounts` / `uploads`, plus `users` and `login_tokens`.
+Documented in full in `docs/06-DATA-MODEL.md`.
+
+Decisions that are load-bearing rather than cosmetic:
+- **`lyrics.body_tsv` is a GENERATED column**, not one the app maintains. This is
+  the one place Postgres is strictly better than SQLite here: `SqliteAdapter`
+  must `DELETE FROM lyrics_fts` and re-`INSERT` by hand, and forgetting once
+  means search returns songs whose lyrics no longer exist. A generated column
+  cannot drift — and it handles the ok→notfound case for free (body becomes
+  NULL, tsvector empties, the song stops matching).
+- **`in_library` is `smallint`, not `boolean`** — the contract says 0|1 and the
+  routes do `!!row.in_library`; a boolean would arrive as `true`/`false` and fail
+  the conformance suite. The column type follows the contract, not the reverse.
+- **`ms_played` is `bigint`** — the real user already has 3.7e9 ms in one year,
+  and `int4` stops at 2.1e9.
+- **Deleting a user is one `DELETE`** — every per-user table cascades from
+  `users(id)`, so GDPR erasure cannot rot as tables are added. The global
+  catalogue is deliberately untouched; other users still need those songs.
+- **`login_tokens.token_hash` is `bytea`** (SHA-256) — a leaked dump must not be
+  a set of working login links. **`users.email` is `citext`** — otherwise a
+  passwordless link silently creates a second account for the same person.
+
+**`src/migrate.js`** — ~80 lines, no framework. Forward-only plain `.sql` in
+filename order; each file in **one transaction** (Postgres has transactional DDL,
+so a failure leaves nothing behind); applied migrations recorded in
+`schema_migrations` **with a checksum**, and editing an applied migration is
+refused rather than silently ignored; a **session advisory lock** around the run
+so two app servers booting at once migrate once. No `down` migrations — a
+rollback that drops a column is a data-loss button that looks like an undo button.
+
+**`docker-compose.yml`** — Postgres 17 on **port 5433** (not 5432, so it cannot
+collide with a locally-installed Postgres), with a healthcheck that means "ready
+for queries".
+
+### Verification — 45 new tests, all against a REAL Postgres
+
+Not a mock: the point of this step is to find out how Postgres behaves, not to
+confirm what we imagined.
+
+- **Runner (14):** numeric filename ordering (`10_` after `9_`), checksums,
+  idempotency, incremental application, **complete rollback of a failed
+  migration** (no orphan table, no recorded version), later migrations not
+  applied after a failure, refusal on an edited migration, advisory lock released
+  on both success and failure.
+- **Schema (30):** two users' libraries stay separate; two users share ONE
+  `songs` row with independent counts; **stemming works** (searching `door`
+  finds a body that only says `doors`) and **`ts_headline` produces the `[[ ]]`
+  markers the contract requires**; the generated tsvector updates itself and
+  empties when lyrics stop being `ok`; deleting a user erases every per-user
+  table and **nothing else**; `citext` email matching; `in_library` returns as a
+  **number**; 3.7e9 ms round-trips; `playlists::text` yields the JSON array
+  string the contract expects; the GIN index is actually used (verified with
+  `EXPLAIN`, not just asserted to exist).
+
+**A real bug in the test setup, found by running everything together:** the first
+full run reported `45 tests, pass 15, fail 0` — 30 neither passed nor failed.
+`node --test` runs files in parallel processes, and both files dropped and
+recreated the *same* test database, so each was tearing down the other's
+connections. It looked exactly like schema failures and was not. Fixed by giving
+each test file its own database (`..._test_migrate`, `..._test_schema`). Worth
+recording because the symptom pointed at entirely the wrong layer.
+
+**Repo total: 289 tests, 0 failures** (core 132, personal 112, web 45).
+Verified that with Postgres unreachable the web tests **skip with an explanation**
+instead of failing, so the root `npm test` stays green for anyone working only on
+the Personal Edition.
+
+### Known issue, recorded for Step 4
+
+`node-postgres` returns `bigint` (`int8`) as a **string**, to avoid silent
+precision loss past 2^53. `ms_played` and `spotify_accounts.expires_at` are
+`int8`, and the conformance suite requires numbers because the routes do
+arithmetic on them. `PostgresAdapter` must cast in SQL (`ms_played::float8`) or
+register a type parser. This is exactly the class of difference the conformance
+suite was written to catch — now known before the adapter exists.
+
+**Also for Step 4:** `searchByLyrics(ftsQuery)` currently takes a string in
+**SQLite FTS5 syntax** (`"door" "open"`), produced by `core.search.toFtsQuery`.
+That is a storage-engine detail that leaked into `core`, and Postgres cannot use
+it. Step 4 should change the contract to pass the *words* and let each adapter
+build its own engine query — `websearch_to_tsquery` for Postgres, the quoted FTS5
+string for SQLite.
+
+**Next: Phase 1, Step 4** — `PostgresAdapter` implementing the same
+`StorageAdapter` contract, scoped to a `user_id`, and passing the same
+conformance suite as `SqliteAdapter`.
