@@ -940,3 +940,66 @@ corrupt upload came back `failed | not a zip file (no end-of-central-directory
 record)` and left the library untouched.
 
 **Next: Phase 1, Step 7** — the Next.js frontend, the last step of Phase 1.
+
+---
+
+## 2026-07-28 — Phase 1, Step 7: Next.js frontend ⚠️ INCOMPLETE — READ THIS FIRST
+
+**Status: written and building, but the signed-in journey was NOT verified.**
+The session was stopped partway through end-to-end testing. Do not assume this
+step is done.
+
+### What exists
+
+New workspace **`apps/web-ui`** (Next.js 15, App Router, React 19). Note the
+deviation from `PROJECT_PLAN.md §9`, which put the frontend at
+`apps/web/frontend`: a nested workspace inside a workspace package causes npm
+tooling pain, so it is a sibling workspace instead.
+
+- `next.config.mjs` — rewrites `/api/*` **and** `/auth/*` to the API process, so
+  the browser sees ONE origin: no CORS, and the session cookie is same-origin
+  rather than a third-party cookie browsers increasingly refuse.
+- `lib/api.js` — server components call the API directly and forward the
+  caller's cookie by hand.
+- Pages: `/` (landing, the SEO surface), `/signin`, `/app` (search),
+  `/app/stats`, `/app/upload`. Only two client components
+  (`signin/form.js`, `app/upload/form.js`); everything else is server-rendered.
+- `app/globals.css` — plain serif, no framework, keeping the Personal Edition's
+  deliberately unfashionable look.
+
+**API change:** `/auth/callback` now redirects a *browser* to `/app` instead of
+returning JSON, detected on a literal `text/html` in `Accept` (browsers send it,
+`fetch` sends `*/*`), so API clients keep the JSON. A bad link redirects to
+`/signin?error=…`. **This change has no test yet — add one.**
+
+### Verified
+
+- `next build` succeeds; all six routes compile.
+- All three processes run together; `/api/health` proxies correctly.
+- The landing page is **real server-rendered HTML** — `<title>`, headline and the
+  12-month warning are all in the source, not injected by JS.
+- Signed-out `/app` → 307 to `/signin`.
+- The emailed link works **verbatim** in a browser: 302 → `/app`, cookie set.
+
+### An integration bug this caught
+
+The first `next.config.mjs` only proxied `/api/*`, but the emailed link is
+`/auth/callback` — which would have 404'd in a browser while every automated test
+passed, because the tests call the API directly. Fixed by proxying `/auth/*`
+under its own name. **This is the class of bug the remaining verification is for.**
+
+### NOT verified — do this first in the next session
+
+1. **Upload → parse → search through the UI.** Sign in, upload an export at
+   `/app/upload`, confirm the worker processes it, then check `/app?q=tear` and
+   `/app/stats` render real data. (This is where the session stopped.)
+2. **`/app/stats` coverage warning** rendering with real ingest metadata.
+3. **The upload client form** in an actual browser (it has never been run).
+4. **A test for the `/auth/callback` browser redirect** in `apps/web/test/api.test.js`.
+
+### Also outstanding for Phase 1
+
+- No automated tests cover the frontend at all. Options: Playwright, or curl the
+  SSR HTML from a test. The latter fits this repo's dependency ethos.
+- `docs/04-TESTING.md` has not been updated for `apps/web` or `apps/web-ui`.
+- Test counts in `apps/web/README.md` and `docs/06-DATA-MODEL.md` are stale.

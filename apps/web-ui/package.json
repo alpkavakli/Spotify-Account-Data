@@ -1,0 +1,18 @@
+{
+  "name": "@lyricsearch/web-ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Hosted service frontend — Next.js, server-rendered for SEO.",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}

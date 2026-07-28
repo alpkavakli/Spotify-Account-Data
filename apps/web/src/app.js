@@ -34,6 +34,7 @@ const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
  * @param {import("./mailer").Mailer} deps.mailer
  * @param {import("./queue").Queue} [deps.queue]  where upload parsing is handed off
  * @param {string} [deps.baseUrl]   used to build login links
+ * @param {string} [deps.afterSignInPath]  where a browser lands after clicking one
  * @param {boolean} [deps.secureCookies]
  */
 function createApp({
@@ -42,6 +43,7 @@ function createApp({
   mailer,
   queue = new NullQueue(),
   baseUrl = "http://127.0.0.1:3001",
+  afterSignInPath = "/app",
   secureCookies = false,
 }) {
   const app = express();
@@ -72,6 +74,9 @@ function createApp({
 
   const requireUser = (req, res, next) =>
     req.userId ? next() : res.status(401).json({ error: "not signed in" });
+
+  /** Is this a browser following a link, rather than a program calling an API? */
+  const wantsHtml = (req) => String(req.headers.accept || "").includes("text/html");
 
   function setSessionCookie(res, token) {
     res.cookie(auth.SESSION_COOKIE, token, {
@@ -128,12 +133,21 @@ function createApp({
     try {
       const result = await auth.consumeLoginToken(pool, req.query.token);
       if (!result) {
-        return res.status(400).json({ error: "that link is invalid, expired, or already used" });
+        const error = "that link is invalid, expired, or already used";
+        if (wantsHtml(req)) {
+          return res.redirect(`/signin?error=${encodeURIComponent(error)}`);
+        }
+        return res.status(400).json({ error });
       }
       const token = await auth.createSession(pool, result.userId, {
         userAgent: req.get("user-agent") || null,
       });
       setSessionCookie(res, token);
+
+      // A person clicking a link in their inbox should land in the app, not on
+      // a page of JSON. Detected on the literal `text/html`, which browsers send
+      // and `fetch` (Accept: */*) does not — so API clients keep the JSON.
+      if (wantsHtml(req)) return res.redirect(afterSignInPath);
       res.json({ ok: true, isNewUser: result.isNewUser });
     } catch (err) {
       next(err);
