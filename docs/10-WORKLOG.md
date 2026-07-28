@@ -741,3 +741,100 @@ lyrics.
 sessions, upload intake behind a `BlobStore`, and the read routes on top of
 `PostgresAdapter`. The routes should be close to a copy of `apps/personal/src/
 app.js`, because that is what the shared contract was for.
+
+---
+
+## 2026-07-28 — Phase 1, Step 5: web API, accounts, upload intake ✅
+
+**Why:** with the adapter proven, the service needed the parts that make it a
+service — a way in (accounts), a way to give it data (uploads), and the read
+routes on top.
+
+### What we did
+
+**`src/blob-store.js`** — `BlobStore` interface + `LocalBlobStore`. The same move
+as `StorageAdapter`, one layer over: local disk now, S3/R2 later is a new class,
+not a rewrite. Keys are generated **here** (`2026-07/<32 hex>`) and never derived
+from user input — the moment an uploaded filename can influence a path,
+`../../etc/passwd` is a valid upload. `#pathFor` refuses any key that resolves
+outside the root.
+
+**`src/mailer.js`** — `Mailer` + `ConsoleMailer` (prints the link, the dev
+default) + `MemoryMailer` (tests assert on what would have been sent).
+
+**`src/auth.js`** — passwordless sign-in. Two rules run through it:
+- **Raw tokens never touch the database.** Only SHA-256 digests are stored, for
+  both login links and sessions, so a leaked dump is not a set of working logins.
+- **Sign-up and sign-in are the same flow.** The account is created the first
+  time a link is used, which is why `login_tokens` is keyed by email not user id.
+
+Single-use is enforced by `UPDATE ... SET consumed_at = now() WHERE consumed_at
+IS NULL ... RETURNING`, so two simultaneous clicks cannot both win. Links live 15
+minutes, sessions 30 days, and requests are capped at 5/hour/address — the cap is
+about inbox abuse, not credential stuffing, since a link is useless once used.
+
+**`src/app.js`** — `createApp({ pool, blobStore, mailer, baseUrl })`, same factory
+pattern as the Personal Edition. A middleware resolves the session cookie and
+attaches **a PostgresAdapter scoped to that user**; every private route uses
+`req.store`. No route contains SQL, so no route can forget to filter by tenant.
+
+Choices worth recording:
+- **`POST /uploads` takes the raw body**, not multipart. A browser can
+  `fetch(url, {body: file})` and an API client can pipe a file, with no parser
+  and no dependency. Capped at 200 MB.
+- **It answers `202`, not `200`** — parsing happens in the worker (Step 6).
+  Holding a request open for a multi-minute ingest is what the queue is for.
+- **The blob is written before the row.** A row pointing at a missing blob is
+  worse than a blob nothing points at, which is merely garbage to collect.
+- **`GET /song/:id` never returns the lyric body.** `hasLyrics: true` instead.
+  The hosted service shows match + snippet only — the single largest copyright
+  exposure this product has (`PROJECT_PLAN.md` §3/§5). There is a test asserting
+  the body is absent from the response text.
+- **`/auth/request-link` answers identically** for known, unknown and
+  rate-limited addresses, or it becomes a way to ask "does this person have an
+  account here?".
+- **The top-words cache is keyed by user and bounded.** The Personal Edition's
+  was a module-level global; in a multi-tenant process that is a cross-tenant
+  leak. There is a test for it.
+- **`DELETE /me` is one statement.** Everything cascades from `users(id)`.
+
+**`src/server.js`** — migrates on boot (safe: the runner takes an advisory lock,
+so ten app servers starting at once migrate exactly once), then listens. It
+**refuses to start in production** while the mailer is `ConsoleMailer`.
+
+### Verification — 55 new tests, plus a real end-to-end run
+
+`npm test` **417 passing, 0 failures** (core 133, personal 114, web 170).
+
+- **`blob-store.test.js` (11):** binary round-trip, 5 MB blob, identical content
+  gets different keys, keys are unguessable, **path traversal refused**
+  (`../secret`, `/etc/passwd`, `a/../../b`), delete is idempotent.
+- **`api.test.js` (44):** the full sign-in flow; account created on first link
+  use and not duplicated on the second; case-insensitive email; **identical
+  responses for known vs unknown addresses**; raw token absent from the database
+  and equal to `hashToken()` of what was mailed; link single-use; expired link
+  refused; rate limit at 5/hour and scoped per address; cookie is `HttpOnly` +
+  `SameSite=Lax`; session token stored hashed; **logout invalidates the token
+  server-side, not just the cookie**; every private route 401s when signed out;
+  uploads stored byte-identical with a filename that cannot influence the path;
+  and, throughout, **a second signed-in user sees none of the first's songs,
+  stats, uploads, top-words or song ids** (their id 404s, indistinguishable from
+  not existing).
+
+**Then run for real**, because passing tests is not the same as booting:
+`npm start` migrated a fresh database, printed a sign-in link, and the link →
+session → `/me` → upload → `/uploads` → blob-on-disk → `/stats` → link-reuse-
+refused → logout sequence all behaved. The uploaded bytes were verified on disk.
+
+### Known gaps going into Step 6
+
+- **Uploads are stored, not processed.** `status` stays `pending` until the
+  worker exists.
+- **Unzipping needs a dependency.** Node has `zlib` (gzip/deflate) but no zip
+  *container* reader, so Step 6 has to add one (yauzl or similar) or accept
+  loose `.json` files.
+- **No real mailer.** Deliberate, and the server enforces it.
+
+**Next: Phase 1, Step 6** — the pg-boss worker: parse an upload into
+`core.ingest.buildSongs` → `upsertSongs`, and a **global** lyric fetcher that
+fills `lyrics` once per song for the whole user base.

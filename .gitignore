@@ -19,6 +19,9 @@ apps/personal/Data/*
 !apps/personal/Data/.gitkeep
 !apps/personal/Data/README.md
 
+# ─── uploaded export blobs (hosted service, local dev) ───
+apps/web/blobs/
+
 # ─── sqlite database (built locally from your own data) ───
 *.db
 *.db-shm

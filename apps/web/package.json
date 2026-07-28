@@ -12,11 +12,13 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "migrate": "node src/migrate.js",
-    "test": "node --test"
+    "test": "node --test",
+    "start": "node src/server.js"
   },
   "dependencies": {
     "@lyricsearch/core": "*",
     "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "pg": "^8.13.1"
   }
 }

@@ -4,17 +4,57 @@ The multi-tenant SaaS edition. Shares all domain logic with the Personal Edition
 through `@lyricsearch/core`; the only differences are the storage adapter
 (Postgres instead of SQLite) and the host.
 
-**Status: Phase 1, step 4 of 7.** The schema, migration runner and
-`PostgresAdapter` exist; the adapter passes the same conformance suite as
-`SqliteAdapter`. The HTTP API, worker and frontend do not yet — see
+**Status: Phase 1, step 5 of 7.** Schema, migrations, `PostgresAdapter`,
+passwordless accounts, upload intake and the read API all exist. The worker
+(which actually parses uploads) and the frontend do not yet — see
 [`docs/05-PHASE-1-SAAS.md`](../../docs/05-PHASE-1-SAAS.md).
+
+## Running it
+
+```bash
+npm run db:up      # Postgres in Docker
+npm start          # migrates, then listens on :3001
+```
+
+Sign-in links are **printed to the terminal** by `ConsoleMailer` — click one out
+of the log. The server refuses to start with `NODE_ENV=production` until a real
+mailer is wired, because a login system that quietly mails to a log file is worse
+than one that fails to boot.
+
+```bash
+curl -X POST localhost:3001/auth/request-link -H 'content-type: application/json' \
+     -d '{"email":"you@example.com"}'
+# copy the link from the server log, then:
+curl -c jar 'localhost:3001/auth/callback?token=...'
+curl -b jar localhost:3001/me
+curl -b jar --data-binary @export.zip -H 'content-type: application/zip' \
+     'localhost:3001/uploads?filename=export.zip'
+```
+
+## API
+
+| Route | Auth | Purpose |
+|---|---|---|
+| `GET /health` | — | is the database reachable |
+| `POST /auth/request-link` | — | email a one-time sign-in link |
+| `GET /auth/callback?token=` | — | exchange the link for a session cookie |
+| `POST /auth/logout` | — | destroy the session server-side |
+| `GET /me` | — | who am I (`{signedIn:false}` when not) |
+| `DELETE /me` | ✅ | erase the account (one cascading `DELETE`) |
+| `POST /uploads` | ✅ | raw file body → blob store, `202` + queued row |
+| `GET /uploads` | ✅ | your uploads and their status |
+| `GET /searchForWord?q=` | ✅ | lyric search over your library |
+| `GET /song/:id` | ✅ | one song — **snippet only, never full lyrics** |
+| `GET /topWords` | ✅ | your most-sung words |
+| `GET /stats` | ✅ | totals, top songs/artists, coverage window |
+| `GET /status` | ✅ | ingest and lyric-fetch progress |
 
 ## Getting a database
 
 ```bash
 npm run db:up      # Postgres 17 in Docker, on port 5433
 npm run migrate    # apply migrations/*.sql
-npm test           # 115 tests against the real database
+npm test           # 170 tests against the real database
 npm run db:down    # stop it (data survives in the volume)
 ```
 
@@ -35,10 +75,17 @@ src/
   config.js            environment in one place
   migrate.js           the migration runner (~80 lines, no framework)
   postgres-adapter.js  StorageAdapter over pg, scoped to one user
+  blob-store.js        BlobStore contract + LocalBlobStore (disk)
+  mailer.js            Mailer contract + Console/Memory implementations
+  auth.js              passwordless links and sessions (hashed, never raw)
+  app.js               the HTTP API, as a factory
+  server.js            migrate, wire, listen
 test/
   migrate.test.js          the runner: ordering, idempotency, rollback, locking
   schema.test.js           the schema: tenant isolation, FTS, cascades, types
   postgres-adapter.test.js the shared conformance suite + multi-tenancy
+  blob-store.test.js       round-trips, key generation, path traversal
+  api.test.js              the API end-to-end, incl. cross-tenant isolation
 ```
 
 ## The adapter
