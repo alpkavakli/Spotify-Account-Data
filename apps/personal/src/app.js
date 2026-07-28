@@ -59,6 +59,7 @@ function createApp({ store, spotify }) {
         album: r.album,
         uri: r.uri,
         playCount: r.play_count,
+        streamCount: r.stream_count,
         inLibrary: !!r.in_library,
         playlists: JSON.parse(r.playlists),
         snippet: r.snippet,
@@ -77,6 +78,7 @@ function createApp({ store, spotify }) {
       album: row.album,
       uri: row.uri,
       playCount: row.play_count,
+      streamCount: row.stream_count,
       minutesPlayed: Math.round(row.ms_played / 60000),
       inLibrary: !!row.in_library,
       playlists: JSON.parse(row.playlists),
@@ -110,23 +112,41 @@ function createApp({ store, spotify }) {
   // --- Listening stats ---
 
   app.get("/stats", async (req, res) => {
-    const { totals, topSongs, topArtists } = await store.getStats();
+    const [{ totals, topSongs, topArtists }, meta] = await Promise.all([
+      store.getStats(),
+      store.getMeta(),
+    ]);
     res.json({
       tracks: totals.tracks,
       artists: totals.artists,
       plays: totals.plays,
+      streams: totals.streams,
       hours: Math.round(totals.ms / 3600000),
+      // What the numbers above actually cover. Spotify's standard export holds
+      // only the last 12 months, so a stats page that does not say so reads as
+      // "all time" and is wrong. Null until the next ingest fills it in.
+      coverage: {
+        from: meta.history_from || null,
+        to: meta.history_to || null,
+        source: meta.history_source || null,
+        skipThresholdSeconds: meta.skip_threshold_ms
+          ? Number(meta.skip_threshold_ms) / 1000
+          : null,
+        ingestedAt: meta.ingested_at || null,
+      },
       topSongs: topSongs.map((s) => ({
         id: s.id,
         artist: s.artist,
         track: s.track,
         plays: s.play_count,
+        streams: s.stream_count,
         minutes: Math.round(s.ms_played / 60000),
       })),
       topArtists: topArtists.map((a) => ({
         artist: a.artist,
         songs: a.songs,
         plays: a.plays,
+        streams: a.streams,
         hours: +(a.ms / 3600000).toFixed(1),
       })),
     });

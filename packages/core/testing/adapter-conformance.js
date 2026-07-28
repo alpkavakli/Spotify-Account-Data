@@ -91,12 +91,13 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
           uri: "spotify:track:first",
           in_library: 1,
           play_count: 10,
+          stream_count: 8,
           ms_played: 1000,
           playlists: ["A"],
         };
         await store.upsertSongs([first]);
         await store.upsertSongs([
-          { ...first, album: "Second Album", uri: "spotify:track:second", in_library: 0, play_count: 4, ms_played: 400, playlists: ["B"] },
+          { ...first, album: "Second Album", uri: "spotify:track:second", in_library: 0, play_count: 4, stream_count: 3, ms_played: 400, playlists: ["B"] },
         ]);
 
         const [{ id }] = await store.getSongsNeedingLyrics({});
@@ -105,6 +106,7 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
         assert.equal(row.uri, "spotify:track:first", "uri must not be overwritten");
         assert.equal(row.in_library, 1, "in_library must not drop back to 0");
         assert.equal(row.play_count, 4, "play_count must be replaced, not added");
+        assert.equal(row.stream_count, 3, "stream_count must be replaced, not added");
         assert.equal(row.ms_played, 400, "ms_played must be replaced, not added");
         assert.deepEqual(JSON.parse(row.playlists), ["B"], "playlists must be replaced");
       });
@@ -118,6 +120,7 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
           uri: null,
           in_library: 0,
           play_count: 1,
+          stream_count: 1,
           ms_played: 100,
           playlists: [],
         };
@@ -179,6 +182,15 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
         );
       });
 
+      test.it("distinguishes plays from streams", async () => {
+        // play_count counts every play; stream_count counts only those past the
+        // skip threshold. A backend that maps both to the same column passes
+        // every other test in this suite and is still wrong.
+        const [row] = await store.searchByLyrics('"door"');
+        assert.equal(row.play_count, 30);
+        assert.equal(row.stream_count, 24);
+      });
+
       test.it("orders by play_count descending", async () => {
         const rows = await store.searchByLyrics('"door"');
         const counts = rows.map((r) => r.play_count);
@@ -208,6 +220,7 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
         assert.equal(typeof row.artist, "string");
         assert.equal(typeof row.track, "string");
         assert.equal(typeof row.play_count, "number");
+        assert.equal(typeof row.stream_count, "number");
         assert.equal(typeof row.in_library, "number", "in_library is 0|1, the host does !!");
         assert.equal(typeof row.body, "string");
         assert.equal(typeof row.snippet, "string");
@@ -244,6 +257,7 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
         assert.equal(row.uri, "spotify:track:s1");
         assert.equal(row.in_library, 1);
         assert.equal(row.play_count, 30);
+        assert.equal(row.stream_count, 24);
         assert.equal(row.ms_played, 5_400_000);
         assert.equal(row.status, "ok");
         assert.match(row.body, /opened the door/);
@@ -427,6 +441,7 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
         assert.equal(totals.tracks, 6);
         assert.equal(totals.artists, 4, "artists are counted distinctly");
         assert.equal(totals.plays, 57);
+        assert.equal(totals.streams, 44, "streams are counted separately from plays");
         assert.equal(totals.ms, 8_700_000);
         for (const [k, v] of Object.entries(totals)) {
           assert.equal(typeof v, "number", `totals.${k} must be a number, the host divides it`);
@@ -440,17 +455,21 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
           ["Open Door", "Two Doors Down", "Silent Field", "No Lyrics Yet", "Missing Words"]
         );
         assert.ok(!topSongs.some((s) => s.track === "Instrumental Interlude"));
+        assert.deepEqual(
+          topSongs.map((s) => [s.play_count, s.stream_count]),
+          [[30, 24], [12, 9], [5, 4], [7, 5], [3, 2]]
+        );
       });
 
       test.it("getStats.topArtists groups by artist and sorts by time listened", async () => {
         const { topArtists } = await store.getStats();
         assert.deepEqual(
-          topArtists.map((a) => [a.artist, a.songs, a.plays, a.ms]),
+          topArtists.map((a) => [a.artist, a.songs, a.plays, a.streams, a.ms]),
           [
-            ["Aurora Vale", 2, 30, 5_400_000],
-            ["Kestrel Line", 1, 12, 1_800_000],
-            ["Marble Hound", 1, 5, 900_000],
-            ["Nine Volt", 2, 10, 600_000],
+            ["Aurora Vale", 2, 30, 24, 5_400_000],
+            ["Kestrel Line", 1, 12, 9, 1_800_000],
+            ["Marble Hound", 1, 5, 4, 900_000],
+            ["Nine Volt", 2, 10, 7, 600_000],
           ]
         );
       });
@@ -495,6 +514,49 @@ function describeStorageAdapter({ name, createAdapter, destroyAdapter }) {
       test.it("clearAuth on an empty store is a no-op, not an error", async () => {
         await store.clearAuth();
         assert.equal(await store.getAuth(), null);
+      });
+    });
+
+    test.describe("meta", () => {
+      test.it("returns an empty object before anything is stored", async () => {
+        assert.deepEqual(await store.getMeta(), {});
+      });
+
+      test.it("stores and returns keys", async () => {
+        await store.setMeta({ history_from: "2019-03-04", history_to: "2026-04-17" });
+        assert.deepEqual(await store.getMeta(), {
+          history_from: "2019-03-04",
+          history_to: "2026-04-17",
+        });
+      });
+
+      test.it("upserts — a second write updates rather than duplicating", async () => {
+        await store.setMeta({ history_to: "2026-01-01" });
+        await store.setMeta({ history_to: "2026-04-17" });
+        assert.deepEqual(await store.getMeta(), { history_to: "2026-04-17" });
+      });
+
+      test.it("merges with keys written earlier", async () => {
+        await store.setMeta({ a: "1" });
+        await store.setMeta({ b: "2" });
+        assert.deepEqual(await store.getMeta(), { a: "1", b: "2" });
+      });
+
+      test.it("returns values as strings, whatever went in", async () => {
+        // Metadata is display material, not arithmetic. Storing it as text keeps
+        // one column usable for dates, numbers and flags alike.
+        await store.setMeta({ skip_threshold_ms: 30000 });
+        assert.equal((await store.getMeta()).skip_threshold_ms, "30000");
+      });
+
+      test.it("round-trips a null", async () => {
+        await store.setMeta({ history_from: null });
+        assert.equal((await store.getMeta()).history_from, null);
+      });
+
+      test.it("accepts an empty write", async () => {
+        await store.setMeta({});
+        assert.deepEqual(await store.getMeta(), {});
       });
     });
 

@@ -433,3 +433,112 @@ already in place to prove it changes nothing.
 
 **Next: Phase 1, Step 3** — Postgres schema + migrations (global `songs`/`lyrics`,
 per-user `user_songs`, `users`, `sessions`), runnable from docker-compose.
+
+---
+
+## 2026-07-28 — Stats accuracy: plays vs listens, 12-month export disclosure ✅
+
+**Why:** `WARNINGS.md` reported that "Habibi" was missing from the top-listened
+songs despite 800+ historical plays, and asked whether the fault was Spotify's data
+or our calculations.
+
+### Investigation (the complaint was NOT a bug)
+
+The streaming history in `apps/personal/Data/` spans **exactly 366 days**
+(2025-04-16 → 2026-04-17, 22 236 rows over 3 files). Spotify's standard
+**"Account data"** package contains only the **last 12 months**; the 800+ plays
+happened before that window and are simply absent from the files. In the window
+that does exist, Habibi is counted correctly — 61 rows in the JSON, ranking **#30
+of 4044** by listening time, against a top-25 list. It missed the cutoff by about
+20 minutes of listening.
+
+The fix is to request Spotify's **"Extended streaming history"** (same privacy
+page, up to ~30 days, covers the whole account, different filenames and field
+names). So the work below is: read that format, make the counting honest, and
+never again let the UI imply the numbers are all-time.
+
+### Two real defects found while investigating
+
+1. **0 ms rows were silently dropped from every counter.** `core/ingest.js` used
+   `if (extra.ms_played)` — falsy on `0`. Exactly **223** of 22 236 rows have
+   `msPlayed: 0`, and `22236 − 223 = 22013`, which is precisely what `/stats`
+   reported. Excluding them is right (queued, never started) but it was an
+   accident of truthiness, not a decision, and it was invisible.
+2. **Skips counted as full plays.** 4510 of 22 013 plays (**20.5 %**) last under
+   30 s. `play_count` therefore flattered songs the user keeps skipping past.
+
+### What we did
+
+**`core/ingest.js`**
+- **Explicit 0 ms handling.** A 0 ms row is never a play, and the count of ignored
+  rows is reported. The song itself is still recorded — it appeared in your
+  history, so it stays searchable; dropping it outright would have silently
+  shrunk the library from 4044 to 4012 (caught by re-ingesting the real export
+  and noticing the number move).
+- **`stream_count` alongside `play_count`.** `play_count` = every play over 0 ms,
+  skips included. `stream_count` = plays at or over the skip threshold. Both are
+  kept per song; the difference is skips.
+- **Configurable threshold**, `skipThresholdMs`, default **30 000** (Spotify's own
+  rule — what Wrapped counts and what pays a royalty). Host reads
+  `SKIP_THRESHOLD_SECONDS` from `.env`.
+- **Extended-history support.** New `normalizePlay()` reads both export shapes:
+  `{endTime, artistName, trackName, msPlayed}` and `{ts, ms_played,
+  master_metadata_*, spotify_track_uri}`. Podcast/audiobook rows (all
+  `master_metadata_*` null) are counted as unusable rather than crashing.
+  Bonus: extended rows carry a **track URI on every row**, where the account-data
+  export has none at all — that directly reduces the Spotify lookups playlist
+  creation has to do.
+- **Coverage window.** `stats.historyFrom` / `historyTo`, normalised across both
+  timestamp formats, so the UI can state the real period instead of a hardcoded
+  "12 months" that would be wrong the moment extended history arrives.
+
+**Storage contract + `SqliteAdapter`**
+- `tracks.stream_count` column, exposed through `searchByLyrics`, `getSong` and
+  `getStats` (totals, topSongs, topArtists).
+- New `meta` key/value table + `getMeta()` / `setMeta()` on the contract — dataset
+  facts rather than song facts (coverage window, threshold, source, ingest time).
+  The SaaS will want the same thing per tenant.
+- **A real migration.** `CREATE TABLE IF NOT EXISTS` does nothing to an existing
+  table, so `#migrate()` checks `PRAGMA table_info` and `ALTER TABLE`s the new
+  column in. Verified against the real 7.9 MB database: 4044 tracks and all 4044
+  lyric rows survived untouched.
+
+**Host + UI**
+- `ingest.js` discovers **both** history filename patterns
+  (`StreamingHistory_music_N.json` and `Streaming_History_Audio_*.json`, excluding
+  the video/podcast files), and prints plays / listens / skips / ignored rows /
+  coverage window — plus an explicit warning when the export is account-data only.
+- `/stats` gained `streams`, per-row `streams`, and a `coverage` object
+  (`from`, `to`, `source`, `skipThresholdSeconds`, `ingestedAt`).
+  `/searchForWord` and `/song/:id` gained `streamCount`.
+- **The stats page now states its own limits**: "Counts cover 2025-04-16 →
+  2026-04-17. A play counts as a listen from 30s." plus, for account-data
+  exports, a highlighted note that anything before the start date is missing and
+  how to get the rest. Search results show "played 221× (202 listens)" when the
+  two differ.
+
+**Docs:** `apps/personal/Data/README.md` rewritten around the two-package
+comparison table and the 12-month cap (it also still said "From the `Backend/`
+folder", stale since Phase 0 Step 2); root `README.md` gained a prominent
+warning section; `.env.example` documents `SKIP_THRESHOLD_SECONDS`.
+
+### Verification
+
+- **`npm test`: 244 pass, 0 fail** (core 132, personal 112) — 34 new tests
+  covering the threshold boundary (29 999 vs 30 000 ms), 0 ms handling, the
+  extended format, merging both formats into one song, podcast-row rejection,
+  coverage-window computation across both timestamp styles, and the new
+  conformance cases for `stream_count` + `meta`.
+- **Migration on the real database:** columns added in place, 4044 tracks,
+  lyrics `ok=3714 instrumental=144 notfound=186` all preserved.
+- **Re-ingest of the real export:** `22013 plays · 17503 listens (30s+) · 4510
+  skips`, `223 rows ignored (0 ms)`, `covers 2025-04-16 → 2026-04-17`,
+  4044 songs. Play count unchanged from before (the 0 ms rows were already being
+  dropped, just accidentally) — so no user-visible number regressed.
+- **Live endpoints:** `/stats` `plays 22013 / streams 17503 / hours 1035` with the
+  coverage object populated; `/searchForWord?q=door` still **154** results, now
+  with `streamCount`; `/song/412` (Habibi) `playCount 60, streamCount 48`.
+
+**Result:** ✅ the numbers are honest and the UI says what they cover. When the
+extended export arrives, dropping the files in and re-running `npm run ingest` is
+the whole migration.

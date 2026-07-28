@@ -6,7 +6,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildSongs } = require("../src/ingest");
+const { buildSongs, normalizePlay } = require("../src/ingest");
 const { matchKey } = require("../src/matching");
 
 const byKey = (songs) => new Map(songs.map((s) => [s.match_key, s]));
@@ -15,7 +15,10 @@ test.describe("buildSongs", () => {
   test.it("returns nothing for no input", () => {
     const { songs, stats } = buildSongs();
     assert.deepEqual(songs, []);
-    assert.deepEqual(stats, { libraryTracks: 0, playlistLists: 0, playlistItems: 0, plays: 0 });
+    assert.equal(stats.plays, 0);
+    assert.equal(stats.streams, 0);
+    assert.equal(stats.historyRows, 0);
+    assert.equal(stats.historyFrom, null);
   });
 
   test.it("reads library tracks and flags them as in-library", () => {
@@ -35,6 +38,7 @@ test.describe("buildSongs", () => {
       uri: "spotify:track:1",
       in_library: 1,
       play_count: 0,
+      stream_count: 0,
       ms_played: 0,
       playlists: [],
     });
@@ -58,7 +62,9 @@ test.describe("buildSongs", () => {
     assert.equal(songs.length, 1);
     assert.deepEqual(songs[0].playlists, ["Morning", "Evening"]);
     assert.equal(songs[0].in_library, 0);
-    assert.deepEqual(stats, { libraryTracks: 0, playlistLists: 2, playlistItems: 2, plays: 0 });
+    assert.equal(stats.playlistLists, 2);
+    assert.equal(stats.playlistItems, 2);
+    assert.equal(stats.plays, 0);
   });
 
   test.it("counts a play per streaming-history row and sums the milliseconds", () => {
@@ -73,6 +79,38 @@ test.describe("buildSongs", () => {
     assert.equal(songs[0].play_count, 2);
     assert.equal(songs[0].ms_played, 3000);
     assert.equal(stats.plays, 2);
+  });
+
+  test.it("does NOT count a 0 ms row as a play", () => {
+    // A 0 ms row means the track was queued and never started. Counting it
+    // inflates play counts with things you never heard. This used to happen by
+    // accident (`if (extra.ms_played)` is falsy on 0); it is now deliberate and
+    // reported, so the number of ignored rows is visible instead of silent.
+    const { songs, stats } = buildSongs({
+      histories: [
+        [
+          { artistName: "A", trackName: "One", msPlayed: 0 },
+          { artistName: "A", trackName: "One", msPlayed: 60000 },
+        ],
+      ],
+    });
+    assert.equal(songs[0].play_count, 1);
+    assert.equal(songs[0].ms_played, 60000);
+    assert.equal(stats.plays, 1);
+    assert.equal(stats.zeroMsRows, 1);
+    assert.equal(stats.historyRows, 2, "ignored rows are still counted as seen");
+  });
+
+  test.it("still records a song whose only rows are 0 ms, with no plays", () => {
+    // It appeared in your history, so it stays searchable — it just has nothing
+    // to count. Dropping it would silently shrink the library.
+    const { songs } = buildSongs({
+      histories: [[{ artistName: "A", trackName: "One", msPlayed: 0 }]],
+    });
+    assert.equal(songs.length, 1);
+    assert.equal(songs[0].play_count, 0);
+    assert.equal(songs[0].stream_count, 0);
+    assert.equal(songs[0].ms_played, 0);
   });
 
   test.it("merges the same song across all three sources into one row", () => {
@@ -97,6 +135,7 @@ test.describe("buildSongs", () => {
       uri: null,
       in_library: 1,
       play_count: 1,
+      stream_count: 0,
       ms_played: 500,
       playlists: ["Rock"],
     });
@@ -246,5 +285,246 @@ test.describe("buildSongs", () => {
       library: { tracks: [{ artist: "The Doors", track: "Riders - Live" }] },
     });
     assert.equal(songs[0].match_key, matchKey("The Doors", "Riders - Live"));
+  });
+});
+
+test.describe("skip threshold (plays vs streams)", () => {
+  const history = (...msPlayed) => [
+    msPlayed.map((ms) => ({ artistName: "A", trackName: "One", msPlayed: ms })),
+  ];
+
+  test.it("counts a play at or over the threshold as a stream", () => {
+    const { songs, stats } = buildSongs({ histories: history(30_000, 120_000) });
+    assert.equal(songs[0].play_count, 2);
+    assert.equal(songs[0].stream_count, 2, "exactly 30s counts - the boundary is inclusive");
+    assert.equal(stats.streams, 2);
+    assert.equal(stats.skips, 0);
+  });
+
+  test.it("counts a shorter play as a skip: still a play, not a stream", () => {
+    const { songs, stats } = buildSongs({ histories: history(29_999, 5_000) });
+    assert.equal(songs[0].play_count, 2, "skips are still plays");
+    assert.equal(songs[0].stream_count, 0);
+    assert.equal(stats.plays, 2);
+    assert.equal(stats.streams, 0);
+    assert.equal(stats.skips, 2);
+  });
+
+  test.it("defaults to Spotify's own 30-second rule", () => {
+    const { stats } = buildSongs({ histories: history(31_000, 29_000) });
+    assert.equal(stats.skipThresholdMs, 30_000);
+    assert.equal(stats.streams, 1);
+    assert.equal(stats.skips, 1);
+  });
+
+  test.it("honours a custom threshold", () => {
+    // "10 seconds is enough for me to say I listened" is a legitimate position,
+    // so the threshold is the caller's to choose.
+    const { songs, stats } = buildSongs({
+      histories: history(12_000, 8_000),
+      skipThresholdMs: 10_000,
+    });
+    assert.equal(songs[0].stream_count, 1);
+    assert.equal(stats.skipThresholdMs, 10_000);
+    assert.equal(stats.streams, 1);
+    assert.equal(stats.skips, 1);
+  });
+
+  test.it("counts every non-zero play as a stream when the threshold is 0", () => {
+    const { songs, stats } = buildSongs({
+      histories: history(0, 1, 500_000),
+      skipThresholdMs: 0,
+    });
+    assert.equal(songs[0].play_count, 2, "a 0 ms row is never a play, whatever the threshold");
+    assert.equal(songs[0].stream_count, 2);
+    assert.equal(stats.zeroMsRows, 1);
+    assert.equal(stats.plays, 2);
+  });
+
+  test.it("keeps plays and streams separate per song", () => {
+    const { songs } = buildSongs({
+      histories: [
+        [
+          { artistName: "A", trackName: "One", msPlayed: 200_000 },
+          { artistName: "A", trackName: "One", msPlayed: 1_000 },
+          { artistName: "B", trackName: "Two", msPlayed: 1_000 },
+        ],
+      ],
+    });
+    const byTrack = Object.fromEntries(songs.map((s) => [s.track, s]));
+    assert.deepEqual([byTrack.One.play_count, byTrack.One.stream_count], [2, 1]);
+    assert.deepEqual([byTrack.Two.play_count, byTrack.Two.stream_count], [1, 0]);
+  });
+});
+
+test.describe("extended streaming history format", () => {
+  // Spotify's "Extended streaming history" package (the one that actually
+  // contains your whole listening record) uses different filenames AND
+  // different field names from the standard "Account data" package.
+  const extended = (over = {}) => ({
+    ts: "2020-06-01T12:00:00Z",
+    ms_played: 200_000,
+    master_metadata_track_name: "One",
+    master_metadata_album_artist_name: "A",
+    master_metadata_album_album_name: "Alb",
+    spotify_track_uri: "spotify:track:xyz",
+    ...over,
+  });
+
+  test.it("reads extended rows", () => {
+    const { songs, stats } = buildSongs({ histories: [[extended()]] });
+    assert.equal(songs.length, 1);
+    assert.equal(songs[0].artist, "A");
+    assert.equal(songs[0].track, "One");
+    assert.equal(songs[0].play_count, 1);
+    assert.equal(songs[0].stream_count, 1);
+    assert.equal(songs[0].ms_played, 200_000);
+    assert.equal(stats.plays, 1);
+  });
+
+  test.it("takes the album and track URI the extended format carries", () => {
+    // A real gain: the account-data export has NO track URIs at all, which is
+    // why playlist creation has to look every song up on Spotify by name.
+    const { songs } = buildSongs({ histories: [[extended()]] });
+    assert.equal(songs[0].album, "Alb");
+    assert.equal(songs[0].uri, "spotify:track:xyz");
+  });
+
+  test.it("skips podcast and audiobook rows, which share the same file", () => {
+    const { songs, stats } = buildSongs({
+      histories: [
+        [
+          extended(),
+          extended({
+            master_metadata_track_name: null,
+            master_metadata_album_artist_name: null,
+            spotify_track_uri: null,
+          }),
+        ],
+      ],
+    });
+    assert.equal(songs.length, 1);
+    assert.equal(stats.unusableRows, 1);
+    assert.equal(stats.historyRows, 2);
+  });
+
+  test.it("applies the same 0 ms and threshold rules", () => {
+    const { songs, stats } = buildSongs({
+      histories: [[extended({ ms_played: 0 }), extended({ ms_played: 5_000 })]],
+    });
+    assert.equal(songs[0].play_count, 1);
+    assert.equal(songs[0].stream_count, 0);
+    assert.equal(stats.zeroMsRows, 1);
+  });
+
+  test.it("merges both export formats into one song", () => {
+    // Someone who requested the small package, then the big one, can drop both
+    // in - the same song must not land twice.
+    const { songs } = buildSongs({
+      histories: [
+        [{ artistName: "A", trackName: "One", msPlayed: 100_000 }],
+        [extended({ ms_played: 100_000 })],
+      ],
+    });
+    assert.equal(songs.length, 1);
+    assert.equal(songs[0].play_count, 2);
+    assert.equal(songs[0].stream_count, 2);
+    assert.equal(songs[0].uri, "spotify:track:xyz", "the URI comes from the extended row");
+  });
+});
+
+test.describe("normalizePlay", () => {
+  test.it("recognises an account-data row", () => {
+    assert.deepEqual(
+      normalizePlay({ endTime: "2025-04-16 17:48", artistName: "A", trackName: "One", msPlayed: 5 }),
+      { artist: "A", track: "One", album: null, uri: null, ms: 5, at: "2025-04-16 17:48" }
+    );
+  });
+
+  test.it("recognises an extended row by its ms_played field", () => {
+    const row = normalizePlay({
+      ts: "2020-01-01T00:00:00Z",
+      ms_played: 7,
+      master_metadata_track_name: "One",
+      master_metadata_album_artist_name: "A",
+      master_metadata_album_album_name: null,
+      spotify_track_uri: null,
+    });
+    assert.equal(row.ms, 7);
+    assert.equal(row.at, "2020-01-01T00:00:00Z");
+    assert.equal(row.album, null);
+    assert.equal(row.uri, null);
+  });
+
+  test.it("coerces a missing or malformed duration to 0 rather than NaN", () => {
+    assert.equal(normalizePlay({ artistName: "A", trackName: "B" }).ms, 0);
+    assert.equal(normalizePlay({ artistName: "A", trackName: "B", msPlayed: "oops" }).ms, 0);
+  });
+
+  test.it("returns null for a non-object", () => {
+    assert.equal(normalizePlay(null), null);
+    assert.equal(normalizePlay("nope"), null);
+  });
+});
+
+test.describe("history coverage window", () => {
+  test.it("reports the first and last day the history actually covers", () => {
+    // This is what lets the UI say "these numbers cover Apr 2025 - Apr 2026"
+    // instead of silently implying they cover all time.
+    const { stats } = buildSongs({
+      histories: [
+        [
+          { artistName: "A", trackName: "One", msPlayed: 1000, endTime: "2025-04-16 17:48" },
+          { artistName: "A", trackName: "One", msPlayed: 1000, endTime: "2026-04-17 23:10" },
+          { artistName: "A", trackName: "One", msPlayed: 1000, endTime: "2025-12-01 09:00" },
+        ],
+      ],
+    });
+    assert.equal(stats.historyFrom, "2025-04-16");
+    assert.equal(stats.historyTo, "2026-04-17");
+  });
+
+  test.it("spans both export formats and both timestamp styles", () => {
+    const { stats } = buildSongs({
+      histories: [
+        [{ artistName: "A", trackName: "One", msPlayed: 1000, endTime: "2025-04-16 17:48" }],
+        [
+          {
+            ts: "2019-03-04T08:00:00Z",
+            ms_played: 1000,
+            master_metadata_track_name: "One",
+            master_metadata_album_artist_name: "A",
+          },
+        ],
+      ],
+    });
+    assert.equal(stats.historyFrom, "2019-03-04");
+    assert.equal(stats.historyTo, "2025-04-16");
+  });
+
+  test.it("ignores rows that never counted as a play", () => {
+    const { stats } = buildSongs({
+      histories: [
+        [
+          { artistName: "A", trackName: "One", msPlayed: 0, endTime: "2001-01-01 00:00" },
+          { artistName: "A", trackName: "One", msPlayed: 1000, endTime: "2025-04-16 17:48" },
+        ],
+      ],
+    });
+    assert.equal(stats.historyFrom, "2025-04-16", "a 0 ms row must not widen the window");
+  });
+
+  test.it("is null when there is no history", () => {
+    const { stats } = buildSongs({ library: { tracks: [{ artist: "A", track: "One" }] } });
+    assert.equal(stats.historyFrom, null);
+    assert.equal(stats.historyTo, null);
+  });
+
+  test.it("survives an unparseable timestamp", () => {
+    const { stats } = buildSongs({
+      histories: [[{ artistName: "A", trackName: "One", msPlayed: 1000, endTime: "not a date" }]],
+    });
+    assert.equal(stats.plays, 1);
+    assert.equal(stats.historyFrom, null);
   });
 });

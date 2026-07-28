@@ -25,11 +25,11 @@ built-in `fetch`.
 
 | Layer | Where | What it proves | Speed |
 |-------|-------|----------------|-------|
-| **Unit** | `packages/core/test/` | Pure logic: matching, query building, word counting, export merging, and the two HTTP clients with `fetch` mocked. | ~130 ms |
+| **Unit** | `packages/core/test/` | Pure logic: matching, query building, word counting, export merging (both Spotify export formats), and the two HTTP clients with `fetch` mocked. | ~150 ms |
 | **Conformance** | `packages/core/testing/adapter-conformance.js` | Every storage backend behaves *identically*. Run by each adapter's own test file. | ~2 s |
 | **Integration** | `apps/personal/test/routes.test.js` | Real Express server + real SQLite + real HTTP, end to end. | ~2.5 s |
 
-Roughly 210 tests, whole suite under 5 seconds. It is meant to be run constantly.
+Roughly 244 tests, whole suite under 5 seconds. It is meant to be run constantly.
 
 ## Layer 1 — unit tests
 
@@ -73,11 +73,12 @@ cannot enforce that. An executable one can.
 describeStorageAdapter({ name: "SqliteAdapter", createAdapter: () => tempStore() });
 ```
 
-That one line runs ~45 tests covering the whole contract: merge semantics,
+That one line runs ~55 tests covering the whole contract: merge semantics,
 transaction atomicity, search ordering and stemming, snippet markers, index
-cleanup when lyrics stop being `ok`, return types, auth lifecycle. When
-`PostgresAdapter` is written it gets the same one-line call, and any place it
-diverges fails immediately instead of silently in production.
+cleanup when lyrics stop being `ok`, plays-vs-streams, dataset metadata, return
+types, auth lifecycle. When `PostgresAdapter` is written it gets the same
+one-line call, and any place it diverges fails immediately instead of silently
+in production.
 
 Rules for editing it:
 
@@ -94,8 +95,11 @@ Rules for editing it:
 Shared fixtures live in `packages/core/testing/fixtures.js`: six songs chosen so
 that every branch has a case (ok / instrumental / notfound / never-fetched, a
 plural-only lyric body to prove stemming, a song with no "door" to prove
-exclusion). The lyric bodies are **invented for this repo** — a project this
-careful about lyric copyright does not paste real lyrics into fixtures.
+exclusion), and every song has some skipped plays so `play_count` and
+`stream_count` are never equal — a backend that confuses the two fails instead of
+looking right by coincidence. The lyric bodies are **invented for this repo** — a
+project this careful about lyric copyright does not paste real lyrics into
+fixtures.
 
 ## Layer 3 — testing Express routes
 

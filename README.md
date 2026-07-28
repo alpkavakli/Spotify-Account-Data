@@ -22,6 +22,29 @@ Tick the ones you want and it builds the playlist on your Spotify account.
 - **Playlist creation** logs into Spotify via OAuth and, because most exported
   rows have no track URI, looks the missing ones up through Spotify's Search API.
 
+## ⚠️ Spotify's standard export only covers the last 12 months
+
+Spotify's **"Account data"** package — the one that arrives in a few days —
+contains only the **last 12 months** of streaming history. Songs you played
+hundreds of times three years ago will not appear in your stats at all, and
+nothing this app does can recover them.
+
+For your complete listening record, request **"Extended streaming history"** on
+the same page (<https://www.spotify.com/account/privacy/>). It takes up to 30
+days, and it does *not* include your liked songs or playlists — so **request
+both**. This app reads and merges either format; drop the new files into
+`apps/personal/Data/` and re-run `npm run ingest`.
+
+The stats page always states the window your data actually covers, so the
+numbers are never presented as all-time when they are not. See
+[apps/personal/Data/README.md](apps/personal/Data/README.md) for the full
+comparison.
+
+**Plays vs listens.** Every song carries both: *plays* counts every time the
+track started, *listens* counts only those lasting past the skip threshold
+(30 s by default — Spotify's own rule). Set `SKIP_THRESHOLD_SECONDS` in `.env`
+to change it and re-run `npm run ingest`.
+
 ## Requirements
 
 - **Node.js 24+** (the app uses the built-in `node:sqlite` module, which needs

@@ -57,6 +57,7 @@ test.describe("GET /searchForWord", () => {
       album: "First Light",
       uri: "spotify:track:s1",
       playCount: 30,
+      streamCount: 24,
       inLibrary: true,
       playlists: ["Morning"],
       snippet: res.body.results[0].snippet,
@@ -129,6 +130,7 @@ test.describe("GET /song/:id", () => {
     assert.equal(res.body.track, "Open Door");
     assert.equal(res.body.album, "First Light");
     assert.equal(res.body.playCount, 30);
+    assert.equal(res.body.streamCount, 24);
     assert.equal(res.body.minutesPlayed, 90);
     assert.equal(res.body.inLibrary, true);
     assert.deepEqual(res.body.playlists, ["Morning"]);
@@ -227,6 +229,7 @@ test.describe("GET /stats", () => {
     assert.equal(res.body.tracks, 6);
     assert.equal(res.body.artists, 4);
     assert.equal(res.body.plays, 57);
+    assert.equal(res.body.streams, 44);
     assert.equal(res.body.hours, 2); // 8,700,000 ms → 2.42 h → rounded
 
     assert.deepEqual(res.body.topSongs[0], {
@@ -234,12 +237,14 @@ test.describe("GET /stats", () => {
       artist: "Aurora Vale",
       track: "Open Door",
       plays: 30,
+      streams: 24,
       minutes: 90,
     });
     assert.deepEqual(res.body.topArtists[0], {
       artist: "Aurora Vale",
       songs: 2,
       plays: 30,
+      streams: 24,
       hours: 1.5,
     });
   });
@@ -251,6 +256,55 @@ test.describe("GET /stats", () => {
     assert.equal(res.body.tracks, 0);
     assert.deepEqual(res.body.topSongs, []);
     assert.deepEqual(res.body.topArtists, []);
+  });
+
+  test.it("reports the window the numbers cover, once ingest has recorded it", async (t) => {
+    // Spotify's standard export holds only the last 12 months. A stats page
+    // that does not say so reads as all-time and is simply wrong, so the
+    // coverage window ships with the numbers it qualifies.
+    const { client, store } = await withApp(t);
+    await store.setMeta({
+      history_from: "2025-04-16",
+      history_to: "2026-04-17",
+      history_source: "account-data",
+      skip_threshold_ms: 30000,
+      ingested_at: "2026-07-27T10:00:00.000Z",
+    });
+
+    assert.deepEqual((await client.get("/stats")).body.coverage, {
+      from: "2025-04-16",
+      to: "2026-04-17",
+      source: "account-data",
+      skipThresholdSeconds: 30,
+      ingestedAt: "2026-07-27T10:00:00.000Z",
+    });
+  });
+
+  test.it("reports nulls rather than guessing when nothing has been ingested", async (t) => {
+    const { client } = await withApp(t, { seeded: false });
+    assert.deepEqual((await client.get("/stats")).body.coverage, {
+      from: null,
+      to: null,
+      source: null,
+      skipThresholdSeconds: null,
+      ingestedAt: null,
+    });
+  });
+
+  test.it("reports a custom skip threshold in seconds", async (t) => {
+    const { client, store } = await withApp(t);
+    await store.setMeta({ skip_threshold_ms: 10000 });
+    assert.equal((await client.get("/stats")).body.coverage.skipThresholdSeconds, 10);
+  });
+
+  test.it("counts streams separately from plays", async (t) => {
+    const { client } = await withApp(t);
+    const res = await client.get("/stats");
+    assert.ok(
+      res.body.streams < res.body.plays,
+      "the fixture has skipped plays, so streams must be lower"
+    );
+    assert.equal(res.body.plays - res.body.streams, 13);
   });
 });
 

@@ -28,7 +28,8 @@
  * @property {string|null} album
  * @property {string|null} uri
  * @property {number} in_library   0 | 1
- * @property {number} play_count
+ * @property {number} play_count    every play longer than 0 ms, skips included
+ * @property {number} stream_count  plays at or over the skip threshold (default 30s)
  * @property {number} ms_played
  * @property {string[]} playlists
  */
@@ -41,6 +42,7 @@
  * @property {string|null} album
  * @property {string|null} uri
  * @property {number} play_count
+ * @property {number} stream_count
  * @property {number} in_library
  * @property {string} playlists   raw JSON array string
  * @property {string} body        full lyric text (used for occurrence counting)
@@ -96,6 +98,17 @@ class StorageAdapter {
   async clearAuth() { throw new Error("StorageAdapter.clearAuth not implemented"); }
   /** Cache a resolved Spotify URI back onto a song. @param {number} songId @param {string} uri */
   async setSongUri(songId, uri) { throw new Error("StorageAdapter.setSongUri not implemented"); }
+
+  // ── dataset metadata ──
+  // Facts about the ingested export itself rather than about any song: which
+  // period the streaming history actually covers, what skip threshold produced
+  // the counts, when it was ingested. The UI needs this to be honest about what
+  // the numbers mean — Spotify's standard export only carries 12 months, and a
+  // stats page that does not say so is quietly lying.
+  /** @returns {Promise<Record<string,string>>} every stored key (empty object if none) */
+  async getMeta() { throw new Error("StorageAdapter.getMeta not implemented"); }
+  /** Upsert metadata keys. MUST be atomic. @param {Record<string,string|number|null>} entries */
+  async setMeta(entries) { throw new Error("StorageAdapter.setMeta not implemented"); }
 
   // ── lifecycle ──
   async close() { throw new Error("StorageAdapter.close not implemented"); }

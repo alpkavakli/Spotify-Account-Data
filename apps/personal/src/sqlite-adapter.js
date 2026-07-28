@@ -40,6 +40,7 @@ class SqliteAdapter extends StorageAdapter {
         uri         TEXT,
         in_library  INTEGER NOT NULL DEFAULT 0,
         play_count  INTEGER NOT NULL DEFAULT 0,
+        stream_count INTEGER NOT NULL DEFAULT 0,
         ms_played   INTEGER NOT NULL DEFAULT 0,
         playlists   TEXT NOT NULL DEFAULT '[]'
       );
@@ -66,6 +67,15 @@ class SqliteAdapter extends StorageAdapter {
       );
     `);
 
+    // Facts about the ingested export itself (history coverage window, the skip
+    // threshold that produced the counts, ingest time) — see StorageAdapter.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT
+      );
+    `);
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS auth (
         id            INTEGER PRIMARY KEY CHECK (id = 1),
@@ -76,20 +86,42 @@ class SqliteAdapter extends StorageAdapter {
         display_name  TEXT
       );
     `);
+
+    this.#migrate();
+  }
+
+  // Forward-only migrations for databases created by an earlier version.
+  // CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
+  // a column added later has to be applied explicitly or existing users get
+  // "no such column" on the next query.
+  #migrate() {
+    const columns = this.db
+      .prepare("PRAGMA table_info(tracks)")
+      .all()
+      .map((c) => c.name);
+
+    if (!columns.includes("stream_count")) {
+      // Existing rows get 0 until the next `npm run ingest` recomputes them from
+      // the export. Defaulting to play_count would be a lie: we cannot know how
+      // many of those plays passed the skip threshold without re-reading the
+      // history files.
+      this.db.exec("ALTER TABLE tracks ADD COLUMN stream_count INTEGER NOT NULL DEFAULT 0");
+    }
   }
 
   // ── ingest ──
   async upsertSongs(songs) {
     const stmt = this.db.prepare(`
-      INSERT INTO tracks (match_key, artist, track, album, uri, in_library, play_count, ms_played, playlists)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tracks (match_key, artist, track, album, uri, in_library, play_count, stream_count, ms_played, playlists)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(match_key) DO UPDATE SET
-        album      = COALESCE(tracks.album, excluded.album),
-        uri        = COALESCE(tracks.uri, excluded.uri),
-        in_library = MAX(tracks.in_library, excluded.in_library),
-        play_count = excluded.play_count,
-        ms_played  = excluded.ms_played,
-        playlists  = excluded.playlists
+        album        = COALESCE(tracks.album, excluded.album),
+        uri          = COALESCE(tracks.uri, excluded.uri),
+        in_library   = MAX(tracks.in_library, excluded.in_library),
+        play_count   = excluded.play_count,
+        stream_count = excluded.stream_count,
+        ms_played    = excluded.ms_played,
+        playlists    = excluded.playlists
     `);
     this.db.exec("BEGIN");
     try {
@@ -102,6 +134,7 @@ class SqliteAdapter extends StorageAdapter {
           s.uri,
           s.in_library,
           s.play_count,
+          s.stream_count || 0,
           s.ms_played,
           JSON.stringify(s.playlists)
         );
@@ -118,8 +151,8 @@ class SqliteAdapter extends StorageAdapter {
   async searchByLyrics(ftsQuery) {
     return this.db
       .prepare(
-        `SELECT t.id, t.artist, t.track, t.album, t.uri, t.play_count, t.in_library, t.playlists,
-                l.body,
+        `SELECT t.id, t.artist, t.track, t.album, t.uri, t.play_count, t.stream_count,
+                t.in_library, t.playlists, l.body,
                 snippet(lyrics_fts, 0, '[[', ']]', ' … ', 12) AS snippet
          FROM lyrics_fts
          JOIN tracks t ON t.id = lyrics_fts.rowid
@@ -134,8 +167,8 @@ class SqliteAdapter extends StorageAdapter {
     return (
       this.db
         .prepare(
-          `SELECT t.id, t.artist, t.track, t.album, t.uri, t.play_count, t.ms_played,
-                  t.in_library, t.playlists, l.status, l.body
+          `SELECT t.id, t.artist, t.track, t.album, t.uri, t.play_count, t.stream_count,
+                  t.ms_played, t.in_library, t.playlists, l.status, l.body
            FROM tracks t LEFT JOIN lyrics l ON l.track_id = t.id
            WHERE t.id = ?`
         )
@@ -154,18 +187,20 @@ class SqliteAdapter extends StorageAdapter {
     const totals = this.db
       .prepare(
         `SELECT COUNT(*) tracks, COUNT(DISTINCT artist) artists,
-                SUM(play_count) plays, SUM(ms_played) ms FROM tracks`
+                SUM(play_count) plays, SUM(stream_count) streams,
+                SUM(ms_played) ms FROM tracks`
       )
       .get();
     const topSongs = this.db
       .prepare(
-        `SELECT id, artist, track, play_count, ms_played FROM tracks
+        `SELECT id, artist, track, play_count, stream_count, ms_played FROM tracks
          WHERE play_count > 0 ORDER BY ms_played DESC LIMIT 25`
       )
       .all();
     const topArtists = this.db
       .prepare(
-        `SELECT artist, COUNT(*) songs, SUM(play_count) plays, SUM(ms_played) ms
+        `SELECT artist, COUNT(*) songs, SUM(play_count) plays,
+                SUM(stream_count) streams, SUM(ms_played) ms
          FROM tracks GROUP BY artist HAVING plays > 0
          ORDER BY ms DESC LIMIT 25`
       )
@@ -264,6 +299,29 @@ class SqliteAdapter extends StorageAdapter {
 
   async setSongUri(songId, uri) {
     this.db.prepare("UPDATE tracks SET uri = ? WHERE id = ?").run(uri, songId);
+  }
+
+  // ── dataset metadata ──
+  async getMeta() {
+    const rows = this.db.prepare("SELECT key, value FROM meta").all();
+    return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  }
+
+  async setMeta(entries) {
+    const stmt = this.db.prepare(
+      `INSERT INTO meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    );
+    this.db.exec("BEGIN");
+    try {
+      for (const [key, value] of Object.entries(entries)) {
+        stmt.run(key, value === null || value === undefined ? null : String(value));
+      }
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   // ── lifecycle ──

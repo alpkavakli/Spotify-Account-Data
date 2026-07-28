@@ -31,6 +31,9 @@
   .wordlink { color: #1a6b3c; cursor: pointer; }
   .wordlink:hover { text-decoration: underline; }
   h2 { font-size: 1rem; margin: 1.4rem 0 .5rem; }
+  .coverage { font-size: .82rem; color: #666; margin: .2rem 0 0;
+              border-left: 3px solid #ddd; padding: .35rem .8rem; background: #fafafa; }
+  .coverage .warn { color: #8a5a00; }
   .hidden { display: none; }
   #account { float: right; font-size: .8rem; color: #666; }
   #account a, #account button { font-size: .8rem; }
@@ -184,7 +187,12 @@ function renderSong(s) {
   info.className = 'info';
   const bits = [];
   if (s.occurrences > 1) bits.push(s.occurrences + '× in lyrics');
-  if (s.playCount) bits.push('played ' + s.playCount + '×');
+  // "played 40× (12 listens)" — the gap between them is skips, and for some
+  // songs it is most of the number.
+  if (s.playCount) {
+    bits.push('played ' + s.playCount + '×' +
+      (s.streamCount < s.playCount ? ' (' + s.streamCount + ' listens)' : ''));
+  }
   if (s.inLibrary) bits.push('liked');
   if (s.playlists.length) bits.push('in: ' + s.playlists.join(', '));
   info.textContent = bits.join(' · ');
@@ -390,20 +398,58 @@ async function loadWords() {
 }
 
 // --- stats ---
+
+// Say plainly what period these numbers describe. Spotify's standard "Account
+// data" export contains ONLY THE LAST 12 MONTHS of streaming history, so a
+// stats page that stays silent reads as all-time and misleads — the top-songs
+// list will be missing songs the user played hundreds of times years ago.
+function coverageNote(c) {
+  if (!c || !c.from) return null;
+
+  const p = document.createElement('p');
+  p.className = 'coverage';
+
+  const window = document.createElement('span');
+  window.textContent = 'Counts cover ' + c.from + ' → ' + c.to + '.';
+  p.appendChild(window);
+
+  if (c.skipThresholdSeconds !== null) {
+    p.appendChild(document.createTextNode(
+      ' A play counts as a listen from ' + c.skipThresholdSeconds + 's.'
+    ));
+  }
+
+  if (c.source === 'account-data') {
+    const warn = document.createElement('span');
+    warn.className = 'warn';
+    warn.textContent =
+      ' This is Spotify’s "Account data" export, which only includes the ' +
+      'last 12 months — anything you played before ' + c.from + ' is missing. ' +
+      'Request "Extended streaming history" for your full record (see Data/README.md).';
+    p.appendChild(warn);
+  }
+
+  return p;
+}
+
 async function loadStats() {
   const el = $('view-stats');
   el.textContent = 'loading…';
   const s = await (await fetch('/stats')).json();
-  meta.textContent = s.plays + ' plays · ' + s.hours + ' hours · ' + s.tracks + ' songs · ' + s.artists + ' artists';
+  meta.textContent = s.plays + ' plays · ' + s.streams + ' listens · ' + s.hours +
+    ' hours · ' + s.tracks + ' songs · ' + s.artists + ' artists';
   el.innerHTML = '';
+
+  const note = coverageNote(s.coverage);
 
   const h1 = document.createElement('h2'); h1.textContent = 'most listened songs';
   const t1 = document.createElement('table');
-  t1.innerHTML = '<tr><th></th><th>song</th><th>artist</th><th class="num">plays</th><th class="num">minutes</th></tr>';
+  t1.innerHTML = '<tr><th></th><th>song</th><th>artist</th><th class="num">plays</th>' +
+    '<th class="num">listens</th><th class="num">minutes</th></tr>';
   s.topSongs.forEach((x, i) => {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td>' + (i + 1) + '</td><td></td><td></td><td class="num">' + x.plays +
-      '</td><td class="num">' + x.minutes + '</td>';
+      '</td><td class="num">' + x.streams + '</td><td class="num">' + x.minutes + '</td>';
     tr.children[1].textContent = x.track;
     tr.children[2].textContent = x.artist;
     t1.appendChild(tr);
@@ -411,16 +457,18 @@ async function loadStats() {
 
   const h2 = document.createElement('h2'); h2.textContent = 'most listened artists';
   const t2 = document.createElement('table');
-  t2.innerHTML = '<tr><th></th><th>artist</th><th class="num">songs</th><th class="num">plays</th><th class="num">hours</th></tr>';
+  t2.innerHTML = '<tr><th></th><th>artist</th><th class="num">songs</th><th class="num">plays</th>' +
+    '<th class="num">listens</th><th class="num">hours</th></tr>';
   s.topArtists.forEach((x, i) => {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td>' + (i + 1) + '</td><td></td><td class="num">' + x.songs +
-      '</td><td class="num">' + x.plays + '</td><td class="num">' + x.hours + '</td>';
+      '</td><td class="num">' + x.plays + '</td><td class="num">' + x.streams +
+      '</td><td class="num">' + x.hours + '</td>';
     tr.children[1].textContent = x.artist;
     t2.appendChild(tr);
   });
 
-  el.append(h1, t1, h2, t2);
+  el.append(...(note ? [note] : []), h1, t1, h2, t2);
 }
 </script>
 </body>

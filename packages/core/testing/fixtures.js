@@ -10,6 +10,10 @@
 //   s5  notfound (a lyric row recording the miss)
 //   s6  NO lyric row at all — the "pending" case getSongsNeedingLyrics must return
 //
+// play_count vs stream_count: every song here has some skipped plays, so the two
+// numbers are never equal. A backend that confuses them fails loudly instead of
+// looking right by coincidence.
+//
 // The lyric bodies are invented for this repo, not real song lyrics: the whole
 // product is careful about lyric copyright, and test fixtures are no exception.
 
@@ -24,6 +28,7 @@ function song(artist, track, extra) {
     uri: null,
     in_library: 0,
     play_count: 0,
+    stream_count: 0,
     ms_played: 0,
     playlists: [],
     ...extra,
@@ -36,11 +41,13 @@ const SONGS = [
     uri: "spotify:track:s1",
     in_library: 1,
     play_count: 30,
+    stream_count: 24,
     ms_played: 5_400_000,
     playlists: ["Morning"],
   }),
   song("Kestrel Line", "Two Doors Down", {
     play_count: 12,
+    stream_count: 9,
     ms_played: 1_800_000,
     playlists: ["Morning", "Late Night"],
   }),
@@ -48,16 +55,19 @@ const SONGS = [
     album: "Quiet",
     in_library: 1,
     play_count: 5,
+    stream_count: 4,
     ms_played: 900_000,
   }),
   song("Aurora Vale", "Instrumental Interlude", { album: "First Light" }),
   song("Nine Volt", "Missing Words", {
     play_count: 3,
+    stream_count: 2,
     ms_played: 200_000,
     playlists: ["Late Night"],
   }),
   song("Nine Volt", "No Lyrics Yet", {
     play_count: 7,
+    stream_count: 5,
     ms_played: 400_000,
   }),
 ];
