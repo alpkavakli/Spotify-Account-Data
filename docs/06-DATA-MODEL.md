@@ -145,7 +145,7 @@ Forward-only, plain `.sql`, applied in filename order by
 ```bash
 npm run db:up   --workspace @lyricsearch/web   # start Postgres (docker, port 5433)
 npm run migrate --workspace @lyricsearch/web   # apply migrations
-npm test        --workspace @lyricsearch/web   # 201 tests against real Postgres
+npm test        --workspace @lyricsearch/web   # 207 tests against real Postgres
 ```
 
 The tests run against a **real** Postgres, never a mock — the entire point is to

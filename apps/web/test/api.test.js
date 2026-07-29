@@ -172,6 +172,93 @@ test.describe("hosted API", { skip }, () => {
     });
   });
 
+  // ── clicking the link in a browser ──────────────────────────────────────
+
+  // The one route a person reaches by hand, from their inbox, rather than
+  // through our own JavaScript. It answers a browser with a redirect and an API
+  // client with JSON, told apart by the literal `text/html` that browsers put in
+  // Accept and `fetch` (Accept: */*) does not. Everything else in this file
+  // speaks as an API client, so without these tests that whole branch is unrun.
+  test.describe("GET /auth/callback from a browser", () => {
+    // What a browser actually sends. The `text/html` is the entire signal.
+    const BROWSER = {
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    };
+
+    /** Ask for a link and pull the token back out of the email. */
+    async function linkToken(client, email) {
+      await client.post("/auth/request-link", { email });
+      const message = api.mailer.lastTo(email);
+      return new URL(message.text.match(/https?:\/\/\S+/)[0]).searchParams.get("token");
+    }
+
+    test.it("redirects to the app instead of showing a page of JSON", async () => {
+      const client = anon();
+      const token = await linkToken(client, "browser@example.com");
+
+      const res = await client.get(`/auth/callback?token=${token}`, { headers: BROWSER });
+      assert.equal(res.status, 302);
+      assert.equal(res.headers.get("location"), "/app");
+    });
+
+    test.it("signs the browser in on the way past", async () => {
+      // The bug this exists for: a redirect that forgets to set the cookie
+      // still looks right — 302 to /app — and then bounces the user straight
+      // back to /signin, because the page they land on sees no session.
+      const client = anon();
+      const token = await linkToken(client, "landing@example.com");
+
+      const res = await client.get(`/auth/callback?token=${token}`, { headers: BROWSER });
+      assert.match(res.headers.getSetCookie().join("; "), new RegExp(SESSION_COOKIE));
+
+      const me = await client.get("/me");
+      assert.equal(me.body.signedIn, true);
+      assert.equal(me.body.email, "landing@example.com");
+    });
+
+    test.it("sends a dead link back to sign-in with a reason to show", async () => {
+      // A browser must never be shown `{"error":…}`. The message travels in the
+      // query string because there is no session yet to hang a flash message on.
+      const res = await anon().get("/auth/callback?token=made-up", { headers: BROWSER });
+      assert.equal(res.status, 302);
+
+      const location = new URL(res.headers.get("location"), api.baseUrl);
+      assert.equal(location.pathname, "/signin");
+      assert.match(location.searchParams.get("error"), /invalid, expired, or already used/);
+    });
+
+    test.it("redirects a browser that reuses a link rather than 400ing at it", async () => {
+      const client = anon();
+      const token = await linkToken(client, "reuse@example.com");
+      await client.get(`/auth/callback?token=${token}`, { headers: BROWSER });
+
+      const second = await anon().get(`/auth/callback?token=${token}`, { headers: BROWSER });
+      assert.equal(second.status, 302);
+      assert.match(second.headers.get("location"), /^\/signin\?error=/);
+    });
+
+    test.it("still answers an API client with JSON", async () => {
+      // The redirect was added after the JSON contract existed. This is the
+      // guard that adding it did not quietly break every non-browser caller.
+      const client = anon();
+      const token = await linkToken(client, "api-client@example.com");
+
+      const res = await client.get(`/auth/callback?token=${token}`, {
+        headers: { Accept: "*/*" },
+      });
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body, { ok: true, isNewUser: true });
+    });
+
+    test.it("still answers an API client with a 400 on a dead link", async () => {
+      const res = await anon().get("/auth/callback?token=made-up", {
+        headers: { Accept: "application/json" },
+      });
+      assert.equal(res.status, 400);
+      assert.match(res.body.error, /invalid, expired, or already used/);
+    });
+  });
+
   // ── sessions ────────────────────────────────────────────────────────────
 
   test.describe("sessions", () => {

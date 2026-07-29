@@ -4,8 +4,23 @@ Next.js (App Router), server-rendered. SSR rather than an SPA because the
 service is ad-supported, so organic search traffic is the business model
 (`docs/01-DECISIONS.md`).
 
-**Status: Phase 1, step 7 — mostly done, NOT yet verified end to end.**
-See `docs/10-WORKLOG.md` for exactly what was and was not checked.
+**Status: Phase 1, step 7 — done, verified end to end, and covered by tests.**
+
+## Tests
+
+```bash
+npm run db:up --workspace @lyricsearch/web   # Postgres, or the tests skip
+npm test      --workspace @lyricsearch/web-ui
+```
+
+31 tests. `test/pages.test.js` boots a real Next dev server on a random port with
+a real API behind it and asserts on the HTML — no browser engine. How it works
+and why is in `docs/04-TESTING.md` §Layer 5.
+
+**What it does not cover:** the two client components' React state. Their
+*requests* are exercised byte for byte, but the disabled button,
+`router.refresh()` and the error branch never run. The upload form has still
+never executed in a real browser.
 
 ## Running it
 

@@ -72,4 +72,9 @@ apps/web/                      NEW — the hosted service
 - [x] Step 4 — `PostgresAdapter` passing the conformance suite (see `10-WORKLOG.md`, 2026-07-28)
 - [x] Step 5 — `apps/web` API + accounts + upload intake (see `10-WORKLOG.md`, 2026-07-28)
 - [x] Step 6 — pg-boss worker (see `10-WORKLOG.md`, 2026-07-28)
-- [~] Step 7 — Next.js frontend — **written and building, signed-in journey NOT verified.** See `10-WORKLOG.md` 2026-07-28.
+- [x] Step 7 — Next.js frontend (see `10-WORKLOG.md`, 2026-07-28 and 2026-07-29;
+      frontend test layer in `04-TESTING.md` §Layer 5)
+
+**Phase 1 is complete.** 515 tests across four workspaces. One gap is known and
+deliberate: no browser engine runs the two client components — see
+`04-TESTING.md` §"What the suite does not cover".

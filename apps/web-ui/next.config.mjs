@@ -2,6 +2,11 @@
 const API_ORIGIN = process.env.API_ORIGIN || "http://127.0.0.1:3001";
 
 const nextConfig = {
+  // Normally `.next`. The tests boot their own dev server (test/helpers/next.js)
+  // and point it somewhere else, so running `node --test` while `npm run dev` is
+  // open does not have two servers writing one build directory.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
+
   // Everything the browser touches is served from ONE origin.
   //
   // The API runs as a separate process (apps/web), but proxying it under /api

@@ -1003,3 +1003,184 @@ under its own name. **This is the class of bug the remaining verification is for
   SSR HTML from a test. The latter fits this repo's dependency ethos.
 - `docs/04-TESTING.md` has not been updated for `apps/web` or `apps/web-ui`.
 - Test counts in `apps/web/README.md` and `docs/06-DATA-MODEL.md` are stale.
+
+---
+
+## 2026-07-28 (later) — Step 7 verification: the signed-in journey, for real ✅
+
+Picks up the "NOT verified" list from the entry above. **Items 1, 2 and 4 are
+now done; item 3 is not, and cannot be from here.**
+
+### How it was verified
+
+Against a **completely empty catalogue** (`catalogue: {"songs":0,…}` at worker
+boot), so nothing below is a leftover from an earlier run.
+
+All three processes up, with `BASE_URL=http://127.0.0.1:3000` — the emailed link
+has to point at the *frontend*, not the API, or the browser never reaches the
+`/auth/*` rewrite. **The API's default `BASE_URL` is `:3001`, which is wrong for
+any run that involves a browser.** Worth remembering.
+
+Every request went **through the :3000 proxy**, replicating exactly what the two
+client components send (`signin/form.js`, `app/upload/form.js`) — same method,
+same headers, same body — so the proxy hop is part of what was tested rather
+than bypassed.
+
+The fixture was **real data, deliberately bounded**: the 40 most-played tracks
+from the actual `apps/personal/Data` history, all of their plays (3,511), zipped
+with `core/testing/make-zip`. Real enough for real lyrics, small enough that the
+LRCLIB sweep is seconds rather than an hour.
+
+### What happened
+
+1. Sign-in POST → `{"ok":true}`; link printed pointing at `:3000`.
+2. Clicking it with a browser `Accept` → **302 → `/app`**, `ls_session` set
+   `HttpOnly; SameSite=Lax`. `/me` confirms the account.
+3. Signed-out `/app` → **307 → `/signin`**.
+4. Upload → `202 {"status":"pending"}` → worker:
+   `parse-upload #2: done (40 songs)` → `lyrics: ok=36 notfound=2
+   instrumental=2 error=0` → `catalogue: 40/40 processed, 0 pending`.
+5. **`/app?q=rain`** — server-rendered, real: *Rhinestone Eyes* — Gorillaz, with
+   `<mark>rain</mark>` inside "While rain is falling like rhinestones from",
+   `played 115× (89 listens)`, header `40 songs · lyrics found for 36`.
+6. **`/app/stats`** — `3496 plays · 3017 listens · 195 hours · 40 songs ·
+   32 artists`, both tables, and the top-words list linking back into `/app?q=`.
+   Counts agree with the search page (115/89 for Rhinestone Eyes both places).
+7. **The coverage warning renders with real ingest metadata** (item 2): window
+   `2025-04-16` → `2026-04-17`, correctly identified as the 12-month "Account
+   data" export, with the prompt to request extended history.
+8. `/app/upload` afterwards lists `verify-export.zip | done | 40`.
+9. **Tenant isolation holds through SSR** — a second signed-in user's `/app?q=rain`
+   says "Nothing to search yet / 0 songs" and their `/app/stats` is the empty
+   state. This is the path where `lib/api.js` forwards the cookie *by hand*, so
+   it is worth checking separately from the API's own isolation tests.
+
+### `/auth/callback` now has tests (item 4)
+
+Six, in `apps/web/test/api.test.js` under **"GET /auth/callback from a browser"**
+— the branch every other test in the file skips, because they all speak as API
+clients. Browser: redirects to `/app`; **sets the session cookie on the way
+past** (a redirect that forgets it looks correct and bounces the user straight
+back to `/signin`); dead and reused links redirect to `/signin?error=…` rather
+than showing JSON. API client: still `200 {ok,isNewUser}` and still `400` — the
+guard that adding the redirect did not break non-browser callers.
+
+`node --test test/api.test.js`: **51 passing, 0 failures.**
+
+### Still open
+
+- **Item 3 — the upload form in an actual browser — is still not done.** The
+  *request* it sends has now been exercised verbatim; what is unverified is the
+  React state handling around it (disabled button, `router.refresh()`, the error
+  branch). That needs a real browser, and adding Playwright is a dependency
+  decision this repo has so far declined.
+- **Frontend has no automated tests yet.** Started, not finished: the plan is to
+  boot API + Next on random ports from a test and assert on the fetched SSR HTML
+  — no browser engine, which fits the repo's dependency ethos. The manual run
+  above is exactly the script such a test should automate.
+- `docs/04-TESTING.md` still does not cover `apps/web` / `apps/web-ui`; test
+  counts in `apps/web/README.md` and `docs/06-DATA-MODEL.md` are still stale.
+- `docs/05-PHASE-1-SAAS.md` still marks step 7 `[~]`. The verification is done;
+  the frontend test layer is what is left before it is `[x]`.
+
+## 2026-07-29 — Step 7 finished: the frontend has tests ✅ (Phase 1 complete)
+
+Closes the "still open" list from the entry above, except the one item that
+cannot be closed without a browser.
+
+### `apps/web-ui/test/pages.test.js` — 31 tests
+
+A real Next dev server on a random port, a real API on another, a real Postgres,
+and assertions on the HTML that comes back. **515 tests repo-wide** (core 163,
+personal 114, web 207, web-ui 31), 0 failures. The frontend layer runs cold in
+about 8 seconds.
+
+The technique and the reasoning are written up properly in `04-TESTING.md`
+§Layer 5. The one discovery worth repeating here:
+
+**`next dev` reads `next.config.mjs` at boot, so the rewrites pick up
+`API_ORIGIN` from the environment.** That is the whole reason this is cheap — a
+test can start the API on a random port and point a dev server at it. With
+`next build && next start` the rewrite destination is baked into the routes
+manifest and every run would need a rebuild. Chosen after spiking both.
+
+Two small changes fell out of it: `next.config.mjs` now takes `distDir` from
+`NEXT_DIST_DIR` (so `node --test` and an open `npm run dev` cannot corrupt each
+other's `.next`), and `@lyricsearch/web-ui` has a `test` script, so the root
+`npm test` actually runs it. A test suite nothing runs is a test suite that rots.
+
+### What the 31 cover
+
+The manual sequence from the previous entry, automated, plus the things a manual
+pass does not bother to check twice:
+
+- **The landing page is real HTML in the response body** — title, meta
+  description, headline, the 12-month warning — asserted from the crawler's
+  position, before any hydration. That is the entire justification for SSR.
+- **Both rewrites**, `/api/*` and `/auth/*`, the second under its own name.
+- **The full sign-in journey**: form POST → the emailed link's *path used
+  verbatim* → 302 → `/app`, cookie set, and the session surviving the hop.
+- **The dead-link path all the way to the page the user reads**, not just the
+  redirect: `/signin` rendering "invalid, expired, or already used".
+- **Sign-out through the proxy**, then `/app` bouncing to `/signin`.
+- **Search**: `<mark>door</mark>`; the stemmed hit rendered as `doors`, the word
+  the lyric actually uses, rather than the query echoed back; non-matching songs
+  absent; `played 30× (24 listens)` — plays and listens never collapsed into one
+  number; `6 songs · lyrics found for 3 · 1 still being looked up`.
+- **Escaping.** A song titled `Corridor <script>alert("track")</script>` with a
+  script tag in its lyric body renders escaped, not executed. Titles come from a
+  file a stranger uploaded and bodies from a third-party API; the snippet is the
+  one place in the app where the obvious implementation is
+  `dangerouslySetInnerHTML`.
+- **Stats**: `57 plays · 44 listens · 2 hours · 6 songs · 4 artists`, both
+  tables, and Open Door's 30/24/90 matching what the search page prints — the two
+  pages cannot silently disagree.
+- **The coverage warning both ways**: present and `notice warn` for an
+  account-data export, gone for an extended one.
+- **Upload through the proxy**: the raw zip as the body and the name in the query
+  string, exactly what `app/upload/form.js` sends. Binary through a rewrite is
+  precisely the thing that works in curl and not in the proxy.
+- **Tenancy through SSR**: a second signed-in user gets the empty states. This is
+  the path where `lib/api.js` forwards the cookie *by hand*, so it is worth
+  checking separately from the API's own isolation tests.
+- **No cross-request leakage**: an anonymous `/app?q=door` right after the owner
+  rendered the same URL still 307s and contains none of their songs.
+
+### The suite was checked against the bug it exists for
+
+Deleting the `/auth/:path*` rewrite — the exact mistake from 2026-07-28 — turns
+the suite red immediately. It fails hard in the `before` hook, because sign-in
+stops working and there is no user to hang a library off, so every test goes with
+it. Noisy, but unmissable, which is the right trade for this particular bug.
+
+### Docs
+
+- `04-TESTING.md` now covers `apps/web` (Layer 4) and `apps/web-ui` (Layer 5) —
+  per-file databases, the synchronous Postgres probe, `NullQueue`, the
+  `<!-- -->` stripping, why the emailed link's path is reused verbatim, and the
+  `BASE_URL` trap.
+- Stale counts fixed in `apps/web/README.md` and `06-DATA-MODEL.md` (201 → 207).
+- `05-PHASE-1-SAAS.md` step 7 → `[x]`. **Phase 1 is complete.**
+
+### The gap, still open and still deliberate
+
+**The upload form has never executed in a real browser.** Its request is now
+exercised byte for byte, but the React state around it — disabled button,
+`router.refresh()`, the error branch — does not run. That needs Playwright, and
+the dependency has not been agreed. It is written down in three places now
+(`04-TESTING.md`, `apps/web-ui/README.md`, the top of `pages.test.js`) so nobody
+reads a green run as more than it is.
+
+### Also this session
+
+`docs/07-FUTURE-FEATURES.md`, new: the weekly/monthly **lyrical summary** —
+embed lyrics once globally, take the minutes-played-weighted mean, rank themes
+against the centroid, have an LLM write the paragraph. Decided: rolling 7/30-day
+windows, live Spotify `recently-played` as the source, minutes as the weight,
+embeddings-then-LLM as the method. Open: where the generation model runs.
+
+Two things in it worth knowing before anyone starts: it has a **hard Phase 2
+dependency** (an export has no concept of "this week", and genres come from the
+API), and a single centroid over a mixed week is a blunt instrument — the mean of
+"heartbreak" and "euphoric dance" is a point that means nothing. Both are written
+up there with mitigations.

@@ -10,26 +10,45 @@ a bug in this document.
 npm test                                   # everything, from the repo root
 npm test --workspace @lyricsearch/core     # just the pure logic  (fast, no I/O)
 npm test --workspace @lyricsearch/personal # adapter + HTTP routes
+npm test --workspace @lyricsearch/web      # hosted API + Postgres  (needs docker)
+npm test --workspace @lyricsearch/web-ui   # the frontend, server-rendered
 
 cd apps/personal && node --test test/routes.test.js   # one file
 cd apps/personal && node --test --test-name-pattern="404"  # one test by name
 node --test --watch                        # re-run on save
 ```
 
+The last two need a database:
+
+```bash
+npm run db:up --workspace @lyricsearch/web    # Postgres on :5433, via docker compose
+```
+
+Without it those two workspaces **skip with an explanation** rather than fail, so
+`npm test` at the root stays green for someone who cloned the repo to work on the
+Personal Edition and has no Docker.
+
 No test framework is installed. Node 24 ships one (`node:test` + `node:assert`),
 it is what `node --test` runs, and it does everything Jest/Mocha would do here.
 Fewer dependencies is the same reason this project uses `node:sqlite` and the
 built-in `fetch`.
 
-## The three layers
+## The layers
 
 | Layer | Where | What it proves | Speed |
 |-------|-------|----------------|-------|
 | **Unit** | `packages/core/test/` | Pure logic: matching, query building, word counting, export merging (both Spotify export formats), and the two HTTP clients with `fetch` mocked. | ~150 ms |
 | **Conformance** | `packages/core/testing/adapter-conformance.js` | Every storage backend behaves *identically*. Run by each adapter's own test file. | ~2 s |
 | **Integration** | `apps/personal/test/routes.test.js` | Real Express server + real SQLite + real HTTP, end to end. | ~2.5 s |
+| **Hosted service** | `apps/web/test/` | Real Express + real **Postgres** + real blob directory, with every route exercised twice: once as the owner, once as somebody else. | ~10 s |
+| **Frontend** | `apps/web-ui/test/` | A real Next.js server in front of a real API, asserting on the HTML that comes back. | ~8 s |
 
-Roughly 244 tests, whole suite under 5 seconds. It is meant to be run constantly.
+515 tests: core 163, personal 114, web 207, web-ui 31. The first three run in
+about five seconds and are meant to be run constantly; the last two need Docker
+and take about twenty.
+
+Layers 4 and 5 are described below in **Layer 4** and **Layer 5** — they arrived
+with the hosted service and have techniques of their own.
 
 ## Layer 1 — unit tests
 
@@ -207,13 +226,132 @@ That is how `/createPlaylist` gets all seven of its outcomes covered
 registered credentials, which is Phase 2. Everything on this side of the network
 call is covered.
 
+## Layer 4 — the hosted service (`apps/web`)
+
+Same factory technique as Layer 3, against a **real Postgres**. A mock of a
+database proves the mock behaves the way you imagined; the whole point here is to
+find out whether *Postgres* does — generated `tsvector` columns, cascade deletes,
+check constraints, and the JavaScript types `node-postgres` hands back. None of
+that can be faked usefully.
+
+`test/helpers/pg.js` and `test/helpers/api.js` are the two seams:
+
+```js
+const pool = await freshDatabase("api");   // dropped, recreated, migrated
+const api  = await startApi(pool);         // real server, random port, temp blobs
+const client = await signIn(api, "someone@example.com");
+```
+
+Four things about it that are not obvious:
+
+- **Every test file gets its own database.** `node --test` runs files in parallel
+  processes, and these helpers *drop and recreate* their database — so two files
+  sharing one name tear down each other's connections mid-test. The failures look
+  exactly like schema bugs and are not. Pass a unique suffix to `freshDatabase()`.
+- **Postgres is probed synchronously, in a child process.** `describe(..., {skip})`
+  is evaluated before any hook can run, so the availability check has to be
+  synchronous while connecting to Postgres is not. Spawning a child to answer it
+  costs ~150 ms, once, and is the honest way to get a synchronous answer out of
+  an asynchronous question.
+- **The test client keeps cookies, like a browser.** Each `makeClient()` is a
+  separate browser, which is how two signed-in users are put side by side to
+  check that neither can see the other.
+- **`NullQueue` records what would have been enqueued and runs nothing.** Route
+  tests assert that work was *handed off*; the jobs themselves are tested
+  directly in `jobs.test.js`, without a queue in the picture at all.
+
+The emphasis is different from the Personal Edition's route tests. There, the
+risk is "does this return the right JSON". Here it is **"can one signed-in user
+reach another user's data"**, so almost every route is exercised twice.
+
+## Layer 5 — the frontend (`apps/web-ui`)
+
+`test/pages.test.js` boots a **real Next.js dev server** in its own process, with
+the real API behind it, and asserts on the HTML that comes back.
+
+### Why this layer exists
+
+Every other test in the repo calls the API directly, which left the seams unrun —
+and one of them bit us. The first `next.config.mjs` proxied `/api/*` but not
+`/auth/*`, so the sign-in link we email people would have 404'd in a browser
+**while all 478 tests stayed green** (`docs/10-WORKLOG.md`, 2026-07-28). The bugs
+in a server-rendered app live in the joins: the rewrite table, the by-hand cookie
+forwarding in `lib/api.js`, the shape of the JSON a page destructures. None of
+them are visible from either side alone.
+
+### No browser engine, on purpose
+
+What this layer covers is the **server** half of server-rendered pages — did the
+page fetch the right thing, forward the session, and put the data in the HTML —
+and all of that is in the bytes Next sends back. Adding Playwright would buy the
+client half at the cost of a browser download and a second runtime in CI, which
+`docs/01-DECISIONS.md` has repeatedly declined. **See "What the suite does not
+cover" — this gap is real and is not to be papered over.**
+
+### The one trick that makes it work
+
+`next dev` reads `next.config.mjs` at **boot**, so the rewrites pick up
+`API_ORIGIN` from the environment. That is what lets a test start the API on a
+random port and point a dev server at it:
+
+```js
+api = await startApi(pool);                       // random port
+ui  = await startNext({ apiOrigin: api.baseUrl }); // random port, proxies to it
+```
+
+With `next build && next start` the rewrite destination is baked into the routes
+manifest, and a random port would need a rebuild on every run. The test server
+also gets its own `distDir` (`.next-test`, via `NEXT_DIST_DIR`), so running the
+tests while `npm run dev` is open does not have two servers writing one build
+directory.
+
+### Reading the HTML
+
+Two helpers do all the work:
+
+```js
+const res = await page(owner, "/app?q=door");   // GET with a browser's Accept header
+assert.match(res.text, /<mark>door<\/mark>/);
+```
+
+- **`page()` strips React's `<!-- -->` separators.** React writes an empty comment
+  between two interpolated values so it can find the boundary again when it
+  hydrates. It is invisible on the page and it is not content — but it lands in
+  the middle of every sentence built from data (`6<!-- --> songs · lyrics found
+  for <!-- -->3`). Without stripping it, every assertion would be written against
+  React's internals instead of the sentence a person reads.
+- **`signInViaBrowser()` uses the emailed link's path verbatim.** It asks for a
+  link on the frontend, pulls the URL out of the mailer, and re-issues the
+  **pathname and query** against the frontend origin. Only the origin is swapped,
+  because in a real deployment `BASE_URL` *is* the frontend while here the API is
+  on its own random port. The path is the part worth testing: that whatever we
+  email is something the frontend actually routes.
+
+The `Accept: text/html` header is not decoration. It is the entire signal the API
+uses to tell a person clicking a link from a program calling a route, so a test
+that leaves it off is not testing the browser path.
+
+### Running the API for real, from a test
+
+`BASE_URL` matters and defaults wrong for anything involving a browser. The API
+defaults to `http://127.0.0.1:3001`, which is itself — so an emailed link points
+at the API and never reaches the frontend's `/auth/*` rewrite. When running the
+three processes by hand:
+
+```bash
+BASE_URL=http://127.0.0.1:3000 npm start --workspace @lyricsearch/web
+```
+
 ## Writing a new test
 
 1. **Pure function?** → `packages/core/test/<module>.test.js`.
 2. **New `StorageAdapter` method?** → add it to the conformance suite **first**.
    Every adapter, present and future, then has to implement it correctly.
 3. **New route?** → `apps/personal/test/routes.test.js`, using `withApp`.
-4. Anything backend-specific → that adapter's own test file, not the shared suite.
+4. **New hosted route?** → `apps/web/test/api.test.js`. Write it twice: once as
+   the owner, once as another signed-in user who must not see the data.
+5. **New page, or a change to what one renders?** → `apps/web-ui/test/pages.test.js`.
+6. Anything backend-specific → that adapter's own test file, not the shared suite.
 
 Conventions worth keeping:
 
@@ -233,5 +371,16 @@ Conventions worth keeping:
   covered — `core.ingest.buildSongs`, `core.lyrics.fetchLyrics` and the adapter
   methods they call are all tested — but the top-level file I/O and the
   concurrency loop are not.
-- The frontend (`frontend/index.html`). Static, no build step, no framework.
+- The Personal Edition's frontend (`frontend/index.html`). Static, no build step,
+  no framework.
+- **Anything in the hosted frontend that needs a browser.** The two client
+  components (`signin/form.js`, `app/upload/form.js`) have their *requests*
+  exercised byte for byte by Layer 5, but their React state does not run: the
+  disabled button, `router.refresh()`, the error branch. **The upload form has
+  never executed in a real browser.** Closing this needs Playwright — a
+  dependency decision the project has not made. Do not read a green Layer 5 run
+  as "the upload form works".
+- The real mailer. There isn't one; `src/server.js` refuses to boot with
+  `NODE_ENV=production` while the mailer is `ConsoleMailer`, which is a
+  deliberate tripwire rather than an oversight.
 - Performance and load. Not meaningful until the SaaS has real traffic.

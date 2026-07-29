@@ -59,7 +59,7 @@ curl -b jar --data-binary @export.zip -H 'content-type: application/zip' \
 ```bash
 npm run db:up      # Postgres 17 in Docker, on port 5433
 npm run migrate    # apply migrations/*.sql
-npm test           # 201 tests against the real database
+npm test           # 207 tests against the real database
 npm run db:down    # stop it (data survives in the volume)
 ```
 
