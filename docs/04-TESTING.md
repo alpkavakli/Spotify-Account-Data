@@ -43,10 +43,11 @@ built-in `fetch`.
 | **Hosted service** | `apps/web/test/` | Real Express + real **Postgres** + real blob directory, with every route exercised twice: once as the owner, once as somebody else. | ~10 s |
 | **Frontend** | `apps/web-ui/test/` | A real Next.js server in front of a real API, asserting on the HTML that comes back. | ~8 s |
 | **Config** | `apps/web/test/mailer.test.js`, `apps/web-ui/test/deploy-routes.test.js` | That production is configured the way the tests assume: which mailer it gets, and that Caddy proxies what `next.config.mjs` proxies. No I/O at all. | ~200 ms |
+| **Publishing** | `tools/publish.test.js` | That no commercial file, and no reference to one, can reach the public OSS repo — by path, by content, and by what the generated tree resolves against. See `09-PUBLISHING.md`. | ~300 ms |
 
-541 tests: core 163, personal 114, web 227, web-ui 37. The first three run in
-about five seconds and are meant to be run constantly; the last two need Docker
-and take about twenty.
+559 tests: core 163, personal 114, web 227, web-ui 37, tools 18. The first three
+run in about five seconds and are meant to be run constantly; the web ones need
+Docker and take about twenty.
 
 Layers 4 and 5 are described below in **Layer 4** and **Layer 5** — they arrived
 with the hosted service and have techniques of their own.
@@ -396,4 +397,8 @@ Conventions worth keeping:
   and `next.config.mjs` agree about *routes*; it never starts a container. The
   images, the volumes and the boot order are checked by running the stack — see
   `08-DEPLOYMENT.md` §"Trying it without a domain".
+- **What you actually commit to the public repo.** `tools/publish.test.js`
+  checks the tree the publish script *generates*. What becomes public is what
+  you `git add` in the target directory, which is why `09-PUBLISHING.md` says to
+  read `git status` before every publish commit. No test can stand in for that.
 - Performance and load. Not meaningful until the SaaS has real traffic.

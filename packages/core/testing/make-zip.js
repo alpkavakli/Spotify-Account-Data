@@ -7,8 +7,8 @@
 // you nothing about why a test fails. This lets a test say "an archive with a
 // lying size header" or "a deflated entry inside a folder" in one line.
 //
-// Exported from @lyricsearch/core/testing so apps/web can build export archives
-// for its worker tests too.
+// Exported from @lyricsearch/core/testing so any host can build export archives
+// for its own tests too.
 
 const zlib = require("node:zlib");
 

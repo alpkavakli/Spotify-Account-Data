@@ -10,10 +10,12 @@
   },
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "tools"
   ],
   "scripts": {
     "test": "npm test --workspaces --if-present",
+    "publish:personal": "npm run publish:personal --workspace @lyricsearch/tools --",
     "start": "npm start --workspace @lyricsearch/personal",
     "ingest": "npm run ingest --workspace @lyricsearch/personal",
     "lyrics": "npm run lyrics --workspace @lyricsearch/personal",

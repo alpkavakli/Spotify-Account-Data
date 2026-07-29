@@ -1364,3 +1364,131 @@ Redis, PgBouncer, more than one app container, a staging environment, log
 shipping. Today's operational surface is `docker compose logs` and an uptime
 monitor on `/api/health`, which 503s rather than 200s when Postgres is
 unreachable.
+
+## 2026-07-29 (later still) — the two-repo split, executed ✅
+
+Decided on 2026-07-27, never done: a public OSS Personal Edition alongside this
+private monorepo. The mechanism was the part left open. It is closed now, and
+`docs/09-PUBLISHING.md` is the procedure.
+
+### First, a check worth doing before any of it
+
+`git remote -v` shows this repo has been pushed to
+`github.com/alpkavakli/Spotify-Account-Data`. An unauthenticated
+`GET /repos/...` returns **404**, so it is private, and `origin/master` matches
+local — the deploy commit is up there. Nothing has leaked. Worth confirming
+before writing a line of publishing code, because the entire design below is
+about a boundary that had not yet been tested.
+
+### Two decisions
+
+**`core` is vendored, not depended on.** The public repo gets `packages/core` as
+a real directory, exactly as this repo has it. That is the answer to "how do the
+two repos share `core`": they do not share it, one generates the other. No
+version to negotiate, no private registry, no skew — what ships is what was
+tested, and a cloner gets one repo that works with `npm install`.
+
+Rejected: `git subtree split` (needs two splits stitched together, and commit
+messages from commits that touched both `core` and `apps/web` would carry
+commercial roadmap detail into public history) and publishing `@lyricsearch/core`
+to npm (a release step, version skew, and nobody could hack on `core` from a
+clone — most of the point of an OSS edition).
+
+**AGPL-3.0-only** for the public edition. Copyleft with the network clause: run a
+*modified* version as a hosted service and you must publish your changes. With
+an ad-supported SaaS as the other track, it is the licence that does not hand a
+competitor the product. MIT and Apache-2.0 were rejected for exactly that
+exposure. The FSF text lives in `tools/licenses/` so publishing needs no network.
+Both recorded in `01-DECISIONS.md`; note it is irreversible per released version.
+
+### The script
+
+`tools/publish-personal.js` writes a directory and nothing else — no `git init`,
+no commit, no push. Turning a tree into a commit stays the user's, like every
+other commit here.
+
+Two properties do the real work:
+
+- **The file list is an allowlist.** It fails *closed*: a commercial directory
+  added next year is absent because nobody added it to `ALLOW`, not because
+  someone remembered to exclude it. A denylist gets this wrong exactly once, and
+  once is permanent — `git push --force` does not unpublish a history, it only
+  hides it from the web UI.
+- **It reads `git ls-files`, not the filesystem.** This machine has a
+  pre-refactor `Backend/` directory and a real Spotify export sitting untracked
+  next to the code. A directory walk would have published both.
+
+It also refuses to write into a non-empty directory (`.git` excepted, so the
+target can be a clone), because merging into leftovers is how a file from an old
+layout survives a rename and quietly stays published.
+
+### The tests are the point
+
+`tools/publish.test.js` — 18 tests, and deliberately the strictest in the repo,
+because publishing is the one operation here that cannot be undone. A bad deploy
+rolls back and a bad migration restores from a dump; a commercial file in a
+public history is public in every clone and mirror that ever saw it.
+
+They assert the same guarantee from four independent directions, since any one
+alone would not be worth much: **by path** (nothing under `apps/web`,
+`apps/web-ui`, `deploy/`, `docs/`, `tools/`, `Backend/` — and the inverse,
+nothing at all outside the allowlist), **by content** (private paths named in
+comments, credential-shaped strings, a stray `"license": "ISC"`), **by
+resolution** (only the two workspaces it ships, no script reaching for an
+unpublished one, no `@lyricsearch/*` import it does not contain), and **by
+running it**.
+
+That last one is the strongest: the generated tree was `npm install`ed from
+clean and its suite run — **277 tests, 163 core + 114 personal, 0 failures**. No
+private registry, no missing helper, no unresolvable workspace. 46 files
+published, 65 held back.
+
+There is also a test asserting the public code still *explains itself* — that
+`storage.js` keeps its Liskov reasoning and its mention of `PostgresAdapter`.
+Scrubbing until the architecture stops making sense is the opposite failure and
+a real one. **Saying a hosted edition exists is fine and intended**; this is open
+core. Citing a file nobody outside can open is not.
+
+### What the content scan actually caught
+
+Not a leak — a class of bug I had not been looking for. `packages/core` and
+`apps/personal` were full of comments citing **private paths**:
+`docs/05-PHASE-1-SAAS.md`, `docs/03-PHASE-0-REFACTOR.md`, `apps/web`. None of
+them reveal anything; all of them are **dangling references** for a reader of the
+public repo, who follows the citation and finds nothing, in a repo they cannot
+see. Fixed at the source in `storage.js`, `index.js` and `make-zip.js` by naming
+*the hosted edition* rather than a path — accurate in both repos, and no publish
+step has to rewrite code to make it true. `README.md` lost its `docs/` tree line
+for the same reason.
+
+`packages/core/src/index.js` also still said "spotify module lands in Step 5",
+which shipped some time ago. Replaced with what the file is actually for.
+
+### Also
+
+`tools` is now a workspace, so `npm test` at the root runs it. That was not
+cosmetic: the obvious alternative — appending `node --test tools/*.test.js` to
+the root `test` script — would have been stripped out of the *public* manifest by
+the script's own "no script referencing an unpublished workspace" rule, leaving
+the public repo with a broken `npm test`. Making it a workspace means the root
+script never names it and the generated manifest simply lists two workspaces
+instead of three.
+
+**559 tests** (core 163, personal 114, web 227, web-ui 37, tools 18), 0 failures.
+
+### Honest about the cost
+
+The public repo is generated, so a PR against it cannot be merged — the next
+publish overwrites it. Changes have to be made here and republished, with the
+contributor credited in the public commit body. In practice it is a read-only
+mirror. `09-PUBLISHING.md` says so plainly, and says what to do if that ever
+stops being acceptable: promote the public repo to the source of truth for
+`core` + `personal` and have this repo consume it, rather than hand-merging
+forever.
+
+### Left to do
+
+Nothing in code. The public repo does not exist on GitHub yet — create it empty,
+clone it, and run the three commands in `09-PUBLISHING.md`. Read `git status`
+before the first publish commit: the tests check the tree the script generates,
+but what becomes public is what you `git add`.

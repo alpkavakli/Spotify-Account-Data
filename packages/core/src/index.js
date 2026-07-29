@@ -5,7 +5,9 @@
 // ...or the whole namespaced surface:
 //   const core = require("@lyricsearch/core");  core.matching.matchKey(...)
 //
-// See docs/03-PHASE-0-REFACTOR.md. (spotify module lands in Step 5.)
+// Nothing here touches a database or an HTTP server. Persistence arrives as a
+// StorageAdapter (see ./storage.js), which is what lets the same logic run on
+// SQLite in the Personal Edition and on Postgres in the hosted one.
 
 module.exports = {
   matching: require("./matching"),

@@ -17,11 +17,13 @@ without re-deriving anything.
 | 06 | [06-DATA-MODEL.md](06-DATA-MODEL.md) | The hosted service's multi-tenant Postgres schema: global songs/lyrics, per-user play data, and why each column is the type it is. |
 | 07 | [07-FUTURE-FEATURES.md](07-FUTURE-FEATURES.md) | Designed but **not scheduled**. Currently: the weekly/monthly lyrical summary (embeddings, time-weighted mean, ML). Read it before starting one of them, not before Phase 1. |
 | 08 | [08-DEPLOYMENT.md](08-DEPLOYMENT.md) | Running the hosted service on a VPS: Docker Compose, Caddy, the mail provider, backups, upgrades. What `deploy/` is. |
+| 09 | [09-PUBLISHING.md](09-PUBLISHING.md) | Generating the public OSS Personal Edition out of this private repo: the allowlist, the AGPL licence, and what keeps commercial code out. What `tools/` is. |
 | 10 | [10-WORKLOG.md](10-WORKLOG.md) | Running, append-only log of what we actually did, step by step, with results. |
 
 **Reading order for a new agent:** `PROJECT_PLAN.md` → `01` → `02` → `03` → `04` → `05` → `06` → `10`
 (then the newest entries in `10-WORKLOG.md` tell you where we are right now).
-`08` is reference for when you deploy, not part of the catch-up read.
+`08` and `09` are reference for when you deploy or publish, not part of the
+catch-up read.
 
 _Convention: low numbers are stable reference; `10-WORKLOG.md` grows over time.
 New reference docs slot in by topic (e.g. `04-DATA-MODEL.md`, `05-LEGAL.md`)._

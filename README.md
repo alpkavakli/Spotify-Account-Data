@@ -141,7 +141,6 @@ An npm-workspaces monorepo. Domain logic lives in a shared, storage-agnostic
 │       ├── Data/         Your Spotify export goes here (git-ignored, empty in repo)
 │       ├── Dockerfile · docker-compose.yml · .env.example
 │       └── package.json
-├── docs/                 planning + architecture docs (start at docs/00-INDEX.md)
 └── package.json          workspaces root
 ```
 

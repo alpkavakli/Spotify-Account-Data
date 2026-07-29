@@ -15,6 +15,13 @@ explicitly reopened.
 | **Search tech** | Postgres full-text search (`tsvector`) to start. | Built-in, free, good for a long time. Swap to Meilisearch/Typesense only if it becomes a bottleneck. |
 | **Job queue** | pg-boss (jobs live inside Postgres). | No extra service to run. Move to BullMQ/Redis later if needed. |
 
+## Resolved decisions (2026-07-29)
+
+| Topic | Decision | Why / notes |
+|-------|----------|-------------|
+| **Publish mechanism** | The public repo is a **generated snapshot**, built by `tools/publish-personal.js` from an **allowlist** of `git ls-files` output. | Closes the "how is `core` shared" question left open above: it is **vendored, not depended on** — the public repo contains `packages/core` as a real directory. No version to negotiate, no private registry, no skew between the two repos, and a cloner gets one repo that works with `npm install`. Chosen over `git subtree split` (needs two splits stitched together, and commit messages from commits touching both `core` and `apps/web` would carry commercial roadmap detail into public history) and over publishing `core` to npm (a release step, version skew, and nobody can hack on `core` from a clone). See `09-PUBLISHING.md`. |
+| **Public licence** | **AGPL-3.0-only** for `core` + `personal` in the public repo. | Copyleft with the network clause: anyone running a *modified* version as a hosted service must publish their changes. Given the other track is an ad-supported SaaS, this is the licence that does not hand a competitor the product. MIT/Apache-2.0 were rejected for exactly that exposure; the private monorepo's own manifests stay `UNLICENSED`. **Irreversible per released version** — anything published under it stays under it. |
+
 **Deferred (Phase 3 / branding):** ad network + consent stack, premium/ad-free tier,
 product name + domain.
 

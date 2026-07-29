@@ -4,8 +4,8 @@
 //
 // core and the hosts depend on THIS abstraction, never on a concrete database
 // (Dependency Inversion). Each edition ships one implementation:
-//   - SqliteAdapter    (apps/personal)   — node:sqlite, single-user
-//   - PostgresAdapter   (apps/web, later) — multi-tenant, user_id-scoped
+//   - SqliteAdapter    — node:sqlite, single-user (the Personal Edition)
+//   - PostgresAdapter  — multi-tenant, user_id-scoped (the hosted edition)
 // They must be fully interchangeable behind this interface (Liskov).
 //
 // Grouped by concern (Interface Segregation): ingest / search+read / lyrics /
@@ -18,7 +18,7 @@
 // is what keeps the two adapters interchangeable (Liskov) and lets `core` and the
 // routes stay identical across editions. The cost on SQLite is one already-
 // resolved promise per call; the alternative is two contracts and two hosts that
-// drift apart. See docs/05-PHASE-1-SAAS.md, Step 2.
+// drift apart.
 
 /**
  * @typedef {object} SongInput  Canonical song produced by core.ingest.buildSongs
