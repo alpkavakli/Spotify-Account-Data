@@ -1,0 +1,57 @@
+# Run the production stack on a laptop, over plain HTTP, with no DNS and no mail
+# provider. For checking that the pieces fit together before pointing a domain
+# at a VPS — never for actually serving anyone.
+#
+#   POSTGRES_PASSWORD=trial DOMAIN=:80 \
+#     docker compose -f docker-compose.yml -f local-trial.yml up --build
+#
+#   → http://127.0.0.1 (sign-in links print in the api container's log:
+#     docker compose -f docker-compose.yml -f local-trial.yml logs -f api)
+#
+# NOT an override that makes production convenient. It is deliberately three
+# settings, all of which exist because there is no TLS here:
+#
+#   NODE_ENV=development  — production refuses to boot without SMTP, and would
+#                           also set the session cookie `secure`, which a
+#                           browser on http:// silently discards. Sign-in would
+#                           appear to work and never take effect.
+#   BASE_URL=http://…     — production requires https://, for the same reason.
+#   no env_file           — there is nothing to configure and no secret to leak
+#                           into a trial run.
+#
+# Everything else — the images, the routing, the volumes, the healthchecks, the
+# migration order — is exactly what production runs. Which is the point.
+
+services:
+  api:
+    env_file: []
+    environment:
+      NODE_ENV: development
+      BASE_URL: http://127.0.0.1
+      DATABASE_URL: postgres://lyricsearch:${POSTGRES_PASSWORD:-trial}@postgres:5432/lyricsearch
+      BLOB_DIR: /data/blobs
+
+  worker:
+    env_file: []
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://lyricsearch:${POSTGRES_PASSWORD:-trial}@postgres:5432/lyricsearch
+      BLOB_DIR: /data/blobs
+
+  caddy:
+    env_file: []
+    environment:
+      # A bare port instead of a hostname: Caddy serves HTTP and does not try to
+      # get a certificate for a name that does not resolve.
+      DOMAIN: ":80"
+      # Never used — a bare port means no ACME at all — but it cannot be empty:
+      # Caddy fails to parse `email` with no argument.
+      ACME_EMAIL: "trial@example.invalid"
+    ports:
+      - "80:80"
+
+  postgres:
+    environment:
+      POSTGRES_USER: lyricsearch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trial}
+      POSTGRES_DB: lyricsearch

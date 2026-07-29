@@ -13,9 +13,16 @@ npm run db:up --workspace @lyricsearch/web   # Postgres, or the tests skip
 npm test      --workspace @lyricsearch/web-ui
 ```
 
-31 tests. `test/pages.test.js` boots a real Next dev server on a random port with
-a real API behind it and asserts on the HTML — no browser engine. How it works
-and why is in `docs/04-TESTING.md` §Layer 5.
+37 tests, in two files.
+
+`test/pages.test.js` (31) boots a real Next dev server on a random port with a
+real API behind it and asserts on the HTML — no browser engine. How it works and
+why is in `docs/04-TESTING.md` §Layer 5.
+
+`test/deploy-routes.test.js` (6) needs nothing running. The rewrites below have
+a production twin in `deploy/Caddyfile`, and this holds the two together: one
+routing table written in two files is a table that drifts, and the drift is
+invisible until nobody can sign in.
 
 **What it does not cover:** the two client components' React state. Their
 *requests* are exercised byte for byte, but the disabled button,

@@ -22,6 +22,9 @@ apps/personal/Data/*
 # ─── uploaded export blobs (hosted service, local dev) ───
 apps/web/blobs/
 
+# ─── production database dumps (written on the server by deploy/backup.sh) ───
+deploy/backups/
+
 # ─── sqlite database (built locally from your own data) ───
 *.db
 *.db-shm

@@ -1173,14 +1173,194 @@ reads a green run as more than it is.
 
 ### Also this session
 
-`docs/07-FUTURE-FEATURES.md`, new: the weekly/monthly **lyrical summary** —
-embed lyrics once globally, take the minutes-played-weighted mean, rank themes
-against the centroid, have an LLM write the paragraph. Decided: rolling 7/30-day
-windows, live Spotify `recently-played` as the source, minutes as the weight,
-embeddings-then-LLM as the method. Open: where the generation model runs.
+`docs/07-FUTURE-FEATURES.md`, new: the weekly/monthly **lyrical summary**.
+Decided: rolling 7/30-day windows, live Spotify `recently-played` as the source,
+minutes played as the weight.
 
-Two things in it worth knowing before anyone starts: it has a **hard Phase 2
-dependency** (an export has no concept of "this week", and genres come from the
-API), and a single centroid over a mixed week is a blunt instrument — the mean of
-"heartbreak" and "euphoric dance" is a point that means nothing. Both are written
-up there with mitigations.
+**The mechanism was revised once during the session, and the revision is the
+interesting part.** The first draft made *embeddings* the only thing that read
+the lyric body — one vector per song, minutes-weighted centroid, nearest theme
+label. That is lossy in exactly the wrong place: it is good at "how close are two
+songs" and bad at "name the topics and say which songs carried them", which is
+the feature. Replaced with a **per-song analysis stage that reads the full lyric
+body** and emits themes with confidences; the window is then a minutes-weighted
+mean over *those*, with embeddings kept as a supporting signal. Same global
+"analyse once per song, share with every user" economics as the lyric catalogue.
+The tally also sidesteps the centroid's worst failure — a mixed week comes out
+bimodal rather than averaging into a point that means nothing.
+
+Two corrections recorded in the doc rather than quietly fixed:
+
+- The first draft argued for keeping lyric bodies on the server for **privacy**.
+  Wrong, and withdrawn there. Lyric bodies are not user data — they are identical
+  for every user, which is why they are stored globally. The user-private facts
+  are which songs someone played and when. The real question is **licensing**
+  (`PROJECT_PLAN.md §5`), and §5's concern is public *display*, which is not the
+  same as processing. Stated properly in the doc.
+- Consequently the hosting recommendation flipped. Analysing lyrics is now the
+  **strongest self-hosting candidate in the project** — high volume, batchable,
+  latency-insensitive, narrow task, and the one step where sending data out is
+  legally awkward. Prose-writing starts hosted: low volume, no lyric bodies, and
+  eloquence is what small local models are worst at.
+
+Also worth knowing before anyone starts: it has a **hard Phase 2 dependency**. An
+export has no concept of "this week", genres come from the API, and
+`recently-played` returns only the last 50 plays — so it needs polling *and* a
+new per-user play-events table.
+
+## 2026-07-29 (later) — the deploy layer ✅ (Phase 1 can ship)
+
+Phase 1 was finished and unshippable: no Dockerfile for either hosted app, no
+compose file, no reverse proxy, no backups, and a `server.js` that refused
+`NODE_ENV=production` outright because the only mailer printed to a terminal.
+All of that now exists in `deploy/`, and the whole stack has been run end to end.
+
+Full walkthrough in the new **`docs/08-DEPLOYMENT.md`**. What follows is what was
+decided and what the process taught, not a repeat of it.
+
+### A real mailer
+
+`SmtpMailer` (nodemailer — one new dependency, chosen deliberately). SMTP rather
+than one provider's HTTP API because it is the one interface all of them speak:
+Resend, Postmark, SES, Mailgun and a box in a cupboard are a host, a port and a
+credential. Changing provider is an edit to `.env`, which matters for the one
+message the service cannot function without.
+
+Both configuration shapes are supported, and the second is not redundant:
+`SMTP_URL` for the common case, and discrete `SMTP_HOST`/`SMTP_USER`/
+`SMTP_PASSWORD` because **SES SMTP passwords are base64 and routinely contain
+`+` and `/`**, which do not survive being parsed as part of a URL.
+
+The interesting part is `mailerFromEnv()`, which lives in `mailer.js` rather than
+`server.js` **so that the rule is testable**, because it is a security rule and
+not a configuration detail: production with no SMTP configured does not fall
+back to `ConsoleMailer`, it refuses to start. Sign-in links in a container log
+are readable by everyone with log access and by nobody trying to log in. A
+service that is down is an incident; a service that mails sign-in links to a log
+file is a breach.
+
+Three more boot-time refusals in `server.js`, all the same idea — a
+misconfiguration that is otherwise invisible until a user hits it:
+
+- **`BASE_URL` unset in production.** It defaults to the API's own
+  `127.0.0.1:3001`, so every emailed link would be dead.
+- **`BASE_URL` not `https://`.** Session cookies are `secure`; a browser on a
+  plaintext origin takes the redirect and silently drops the cookie. Sign-in
+  appears to work and does nothing.
+- **`transport.verify()`** at boot. A wrong SMTP password otherwise surfaces as
+  the *first user's* failed login rather than as your failed deploy.
+
+`apps/web/test/mailer.test.js` — 20 tests, no network. `SmtpMailer` is exercised
+through nodemailer's `jsonTransport`, which builds the real MIME message and
+returns it instead of opening a socket, so the assertions are against what would
+go on the wire rather than against a fake that agrees by construction.
+
+### The images
+
+**One image for the API and the worker.** Same dependencies, same `src/`, only
+the entry point differs; compose overrides the command. `npm ci --omit=dev
+--workspace @lyricsearch/web --include-workspace-root` installs one workspace's
+tree, so the API does not carry Next and React. Every workspace's
+`package.json` still has to be copied in first — `npm ci` validates the whole
+lockfile against the workspaces it declares and refuses a tree with one missing.
+
+**The frontend is a two-stage build on `output: "standalone"`**, so the runtime
+stage is a traced server and no npm tree at all. `outputFileTracingRoot` is set
+explicitly rather than left to infer from the nearest lockfile: in a monorepo a
+wrong guess means either a missing module at runtime or the entire repo in the
+image. Two details that are easy to get wrong and silent when you do —
+`.next/static` is *not* part of standalone output and must be copied separately,
+and `HOSTNAME=0.0.0.0`, because the standalone server binds loopback by default
+and a container answering only itself is invisible to Caddy.
+
+Both run as the `node` user. `/data` is created and chowned before the drop, so
+the named volume inherits the right ownership on first mount.
+
+### Caddy, and the second copy of the routing table
+
+Caddy terminates TLS and routes `/api/*` (stripping) and `/auth/*` (not
+stripping) to the API, everything else to Next. That is deliberately **not** what
+the test suite exercises — the tests go through `next.config.mjs`'s rewrites —
+and the reason to diverge is the upload path: an export body can be 200 MB and
+there is no reason to push it through a Node proxy that only forwards it.
+
+But it means one routing table lives in two files, which is the exact shape of
+the bug this project already had (2026-07-28: `/api/*` proxied, `/auth/*` not,
+478 tests green, nobody able to sign in). So
+**`apps/web-ui/test/deploy-routes.test.js`** imports `next.config.mjs`, reads
+`deploy/Caddyfile`, and asserts they describe the same routes: that `/api` is
+stripped on both sides and `/auth` on neither, that a catch-all exists, that
+every `reverse_proxy` upstream is a service name that exists in
+`docker-compose.yml`, and that Caddy's body cap is *above* the API's 200 MiB so
+the app's JSON 413 is what a user sees rather than an opaque proxy rejection.
+Checked against the bug it exists for: changing `handle /auth/*` to
+`handle_path /auth/*` turns exactly that one test red.
+
+### It was actually run
+
+Not "the config looks right" — the whole stack, built and exercised.
+`deploy/local-trial.yml` runs it over plain HTTP with no DNS and no mail
+provider, changing exactly three things, all consequences of having no TLS
+(`NODE_ENV=development`, an `http://` `BASE_URL`, and `:80` so Caddy does not
+try to certify a name that does not resolve). Images, routing, volumes,
+healthchecks and boot order are production's.
+
+Every hop verified through Caddy on :80: sign-in link requested → the emailed
+path used verbatim → 302 to `/app` with the session cookie surviving the proxy →
+`/app` server-rendered as the signed-in user → a raw zip uploaded → **the worker,
+in its own container, parsed it** → `/api/stats` and the stats page showing the
+song → sign-out → anonymous `/app` bouncing to `/signin`. The worker also
+reached LRCLIB from inside the container and filled the catalogue (`ok=1`).
+
+Two things only a real run found, both now fixed and both documented where the
+error message will be read:
+
+- **Two compose services sharing one `image:` tag both try to build it**, and
+  buildx fails with "image already exists". Only `api` carries the `build:`
+  block now; `worker` just names the image.
+- **An empty `ACME_EMAIL` is a Caddy parse error**, not a warning — the container
+  restart-loops on "wrong argument count or unexpected line ending after
+  'email'". `caddy validate` had passed because it was run *with* a value. That
+  message is now in the Caddyfile, in `.env.example` and in the deployment doc's
+  troubleshooting list.
+
+### Backups
+
+`deploy/backup.sh` — `pg_dump` through the running container, so the host needs
+no Postgres client and no published database port. Writes `.part` and renames on
+success, because an interrupted dump that looks like a good backup is worse than
+no backup; fails loudly if the result is implausibly small, because gzip happily
+succeeds on pg_dump's error output. Postgres only: the uploaded zips restore
+nothing (they are already parsed into the database) and certificates re-issue in
+seconds. The doc says plainly that leaving dumps on the same disk protects
+against `DROP TABLE` and not against losing the box, and that a backup you have
+never restored is a hypothesis.
+
+### Counts
+
+**541 tests** (core 163, personal 114, web 227, web-ui 37), 0 failures. +20
+mailer, +6 deploy routing. Stale counts updated in `04-TESTING.md`,
+`05-PHASE-1-SAAS.md`, `06-DATA-MODEL.md`, and both hosted READMEs.
+
+### What is left before it is actually deployed
+
+None of it is code:
+
+1. A VPS with Docker.
+2. A domain, with DNS pointed at the box **before** the first `up` — Caddy
+   proves control over port 80 to get a certificate.
+3. An account with a transactional-email provider, with SPF and DKIM set up on
+   the sending domain. Sign-in mail that lands in spam is sign-in that does not
+   work.
+
+Then `cp .env.example .env`, fill it in, `docker compose up -d --build`, and sign
+in as yourself before telling anyone the address — it is the one path that
+crosses Caddy, Next, the API, Postgres and the mail provider, and the only way to
+learn that the email really arrives.
+
+Deliberately not built, each a rung on `02-SCALABILITY.md`'s ladder: Cloudflare
+in front (worth doing on day one anyway, and free), object storage for uploads,
+Redis, PgBouncer, more than one app container, a staging environment, log
+shipping. Today's operational surface is `docker compose logs` and an uptime
+monitor on `/api/health`, which 503s rather than 200s when Postgres is
+unreachable.

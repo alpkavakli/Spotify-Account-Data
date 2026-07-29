@@ -75,6 +75,11 @@ apps/web/                      NEW — the hosted service
 - [x] Step 7 — Next.js frontend (see `10-WORKLOG.md`, 2026-07-28 and 2026-07-29;
       frontend test layer in `04-TESTING.md` §Layer 5)
 
-**Phase 1 is complete.** 515 tests across four workspaces. One gap is known and
+**Phase 1 is complete.** 541 tests across four workspaces. One gap is known and
 deliberate: no browser engine runs the two client components — see
 `04-TESTING.md` §"What the suite does not cover".
+
+**And deployable.** `deploy/` runs the whole thing on one VPS behind Caddy, with
+a real SMTP mailer, and has been exercised end to end (`08-DEPLOYMENT.md`). What
+remains before it is *deployed* is not code: a box, a domain, and an account with
+a mail provider.

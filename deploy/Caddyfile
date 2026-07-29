@@ -1,0 +1,72 @@
+# Caddy: TLS, and the one origin the browser sees.
+#
+# Everything is served from a single hostname — the frontend, the API and the
+# sign-in callback. That is not tidiness: it is why the session cookie is an
+# ordinary same-origin cookie instead of a third-party one that browsers
+# increasingly refuse, and why there is no CORS configuration anywhere in this
+# project.
+#
+# IMPORTANT — these routes are the production twin of the `rewrites()` in
+# apps/web-ui/next.config.mjs, which is what the test suite exercises.
+# apps/web-ui/test/deploy-routes.test.js fails if the two drift apart. If you
+# change a path here, change it there.
+{
+	# Where Let's Encrypt sends certificate-expiry warnings.
+	#
+	# This must not be empty. An unset ACME_EMAIL expands to nothing and Caddy
+	# fails to parse with "wrong argument count or unexpected line ending after
+	# 'email'" — which is what that message means if you are reading it in the
+	# caddy container's restart loop.
+	email {$ACME_EMAIL}
+}
+
+# Set DOMAIN in deploy/.env. A bare hostname gets automatic HTTPS; `:80` serves
+# plain HTTP, which is only for trying the stack out on a machine with no DNS.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# An export upload is a raw request body. The API's own limit is 200 MiB and
+	# returns a JSON 413 that the upload form can display; this one is a little
+	# higher on purpose, so the app's error message is what a user sees rather
+	# than a bare proxy rejection.
+	request_body {
+		max_size 210MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# handle_path STRIPS the prefix: /api/searchForWord reaches the API as
+	# /searchForWord. Matches `{source: "/api/:path*", destination: API + "/:path*"}`.
+	handle_path /api/* {
+		reverse_proxy api:3001
+	}
+
+	# handle does NOT strip, so /auth/callback arrives as /auth/callback. The
+	# sign-in link is proxied under its own name so the email reads
+	# https://host/auth/callback?token=… rather than …/api/auth/callback —
+	# people look at links before clicking them, and one that reads like an API
+	# call is one more reason not to.
+	handle /auth/* {
+		reverse_proxy api:3001
+	}
+
+	# Everything else is the Next.js server: pages, /_next/* assets, 404s.
+	#
+	# Note that /api and /auth go straight to the API rather than through Next's
+	# equivalent rewrites. Same destination, one hop fewer — and it keeps a
+	# 200 MB upload body out of a Node proxy that has no reason to touch it.
+	handle {
+		reverse_proxy web-ui:3000
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

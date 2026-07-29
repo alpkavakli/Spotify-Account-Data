@@ -1,11 +1,17 @@
-# Build context is the repo root (see apps/personal/docker-compose.yml).
-# Keep it small and free of secrets / personal data.
+# Build context is the repo root (see apps/personal/docker-compose.yml and
+# deploy/docker-compose.yml). Keep it small and free of secrets / personal data.
 **/node_modules
 **/.env
 **/.claude
 .git
 .gitignore
 .gitattributes
+
+# Local build output and local uploads — the image builds its own, and a
+# host-built .next would be copied over the one the image just made.
+**/.next
+**/.next-*
+apps/web/blobs
 
 # Personal Spotify export + database — mounted at runtime, never baked in.
 **/Data/*

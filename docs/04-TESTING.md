@@ -42,8 +42,9 @@ built-in `fetch`.
 | **Integration** | `apps/personal/test/routes.test.js` | Real Express server + real SQLite + real HTTP, end to end. | ~2.5 s |
 | **Hosted service** | `apps/web/test/` | Real Express + real **Postgres** + real blob directory, with every route exercised twice: once as the owner, once as somebody else. | ~10 s |
 | **Frontend** | `apps/web-ui/test/` | A real Next.js server in front of a real API, asserting on the HTML that comes back. | ~8 s |
+| **Config** | `apps/web/test/mailer.test.js`, `apps/web-ui/test/deploy-routes.test.js` | That production is configured the way the tests assume: which mailer it gets, and that Caddy proxies what `next.config.mjs` proxies. No I/O at all. | ~200 ms |
 
-515 tests: core 163, personal 114, web 207, web-ui 31. The first three run in
+541 tests: core 163, personal 114, web 227, web-ui 37. The first three run in
 about five seconds and are meant to be run constantly; the last two need Docker
 and take about twenty.
 
@@ -351,7 +352,9 @@ BASE_URL=http://127.0.0.1:3000 npm start --workspace @lyricsearch/web
 4. **New hosted route?** → `apps/web/test/api.test.js`. Write it twice: once as
    the owner, once as another signed-in user who must not see the data.
 5. **New page, or a change to what one renders?** → `apps/web-ui/test/pages.test.js`.
-6. Anything backend-specific → that adapter's own test file, not the shared suite.
+6. **New path proxied to the API?** → add it to `next.config.mjs` *and*
+   `deploy/Caddyfile`, and `deploy-routes.test.js` will hold them together.
+7. Anything backend-specific → that adapter's own test file, not the shared suite.
 
 Conventions worth keeping:
 
@@ -380,7 +383,17 @@ Conventions worth keeping:
   never executed in a real browser.** Closing this needs Playwright — a
   dependency decision the project has not made. Do not read a green Layer 5 run
   as "the upload form works".
-- The real mailer. There isn't one; `src/server.js` refuses to boot with
-  `NODE_ENV=production` while the mailer is `ConsoleMailer`, which is a
-  deliberate tripwire rather than an oversight.
+- **Sending real mail.** `SmtpMailer` is tested through nodemailer's
+  `jsonTransport`, which builds the real MIME message and hands it back instead
+  of opening a socket — so the envelope, the headers and the fact that a
+  sign-in link survives intact are all asserted against what would go on the
+  wire. What is *not* tested is that a message leaves the box and arrives:
+  credentials, SPF, DKIM, and whether a provider decides it is spam. Nothing
+  local can test that. `server.js` calls `transport.verify()` at boot in
+  production so a wrong credential is a failed deploy rather than a failed
+  login, and the rest is a thing you check by signing in as yourself once.
+- **That the deployed containers work.** `deploy-routes.test.js` proves Caddy
+  and `next.config.mjs` agree about *routes*; it never starts a container. The
+  images, the volumes and the boot order are checked by running the stack — see
+  `08-DEPLOYMENT.md` §"Trying it without a domain".
 - Performance and load. Not meaningful until the SaaS has real traffic.

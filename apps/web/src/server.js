@@ -11,7 +11,7 @@ const { PgBoss } = require("pg-boss");
 const { databaseUrl } = require("./config");
 const { createApp } = require("./app");
 const { LocalBlobStore } = require("./blob-store");
-const { ConsoleMailer } = require("./mailer");
+const { SmtpMailer, mailerFromEnv } = require("./mailer");
 const { migrate } = require("./migrate");
 const { purgeExpired } = require("./auth");
 const { PgBossQueue, QUEUE_PARSE_UPLOAD, QUEUE_FETCH_LYRICS } = require("./queue");
@@ -22,6 +22,31 @@ const BLOB_DIR = process.env.BLOB_DIR || path.join(__dirname, "..", "blobs");
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 async function main() {
+  // Configuration first, and everything that can be wrong is wrong before we
+  // open a connection. A process that fails at boot is a deploy that rolls
+  // back; a process that fails on the first sign-in is an outage nobody sees
+  // until a user reports it.
+  const mailer = mailerFromEnv();
+
+  if (IS_PRODUCTION) {
+    if (!process.env.BASE_URL) {
+      throw new Error(
+        "BASE_URL is not set. It is the public origin sign-in links are built " +
+          "from, so the default (http://127.0.0.1) would email links that reach " +
+          "nobody. Set it to https://your-domain."
+      );
+    }
+    if (!BASE_URL.startsWith("https://")) {
+      // Session cookies are set `secure` in production, so a browser on a
+      // plaintext origin accepts the redirect and silently drops the cookie —
+      // sign-in appears to work and the user lands back on the sign-in page.
+      throw new Error(`BASE_URL must be https:// in production, got ${BASE_URL}`);
+    }
+    // Credentials that are merely wrong are invisible until someone tries to
+    // log in. Ask the server now, while a failure is still ours to notice.
+    if (mailer instanceof SmtpMailer) await mailer.verify();
+  }
+
   const pool = new Pool({ connectionString: databaseUrl() });
 
   // Migrating on boot is safe because the runner takes an advisory lock: start
@@ -40,19 +65,10 @@ async function main() {
     pool,
     queue: new PgBossQueue(boss),
     blobStore: new LocalBlobStore(BLOB_DIR),
-    // ConsoleMailer prints the login link instead of sending it, which is fine
-    // for development and would be a silent authentication hole in production.
-    mailer: new ConsoleMailer(),
+    mailer,
     baseUrl: BASE_URL,
     secureCookies: IS_PRODUCTION,
   });
-
-  if (IS_PRODUCTION) {
-    throw new Error(
-      "No production mailer is configured yet — sign-in links would only be " +
-        "printed to the log. Wire a real Mailer before setting NODE_ENV=production."
-    );
-  }
 
   // Expired sessions and used login tokens are dead weight, not state.
   const purge = setInterval(() => {
@@ -63,7 +79,11 @@ async function main() {
   const server = app.listen(PORT, () => {
     console.log(`listening on ${BASE_URL}`);
     console.log(`blobs in ${BLOB_DIR}`);
-    console.log("mailer: console (sign-in links are printed here, not emailed)");
+    console.log(
+      mailer instanceof SmtpMailer
+        ? `mailer: smtp (from ${mailer.from})`
+        : "mailer: console (sign-in links are printed here, not emailed)"
+    );
     console.log("note: run `node src/worker.js` too, or uploads stay pending");
   });
 

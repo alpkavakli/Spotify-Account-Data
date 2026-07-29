@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 /** @type {import('next').NextConfig} */
 const API_ORIGIN = process.env.API_ORIGIN || "http://127.0.0.1:3001";
 
@@ -6,6 +8,17 @@ const nextConfig = {
   // and point it somewhere else, so running `node --test` while `npm run dev` is
   // open does not have two servers writing one build directory.
   distDir: process.env.NEXT_DIST_DIR || ".next",
+
+  // Emit a self-contained server: `.next/standalone` gets a server.js plus only
+  // the node_modules the build actually traced. It is what apps/web-ui/Dockerfile
+  // copies into the runtime stage, which is why that image carries no npm tree.
+  // Build-time only — `next dev`, and therefore the test suite, ignores it.
+  output: "standalone",
+
+  // Say where the workspace root is rather than letting the tracer infer it.
+  // In a monorepo it guesses from the nearest lockfile, and a wrong guess means
+  // either a missing dependency at runtime or the whole repo in the image.
+  outputFileTracingRoot: fileURLToPath(new URL("../..", import.meta.url)),
 
   // Everything the browser touches is served from ONE origin.
   //

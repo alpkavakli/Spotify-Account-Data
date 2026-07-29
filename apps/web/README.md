@@ -4,11 +4,13 @@ The multi-tenant SaaS edition. Shares all domain logic with the Personal Edition
 through `@lyricsearch/core`; the only differences are the storage adapter
 (Postgres instead of SQLite) and the host.
 
-**Status: Phase 1, step 6 of 7.** The service works end to end: sign in, upload
-an export, and it is parsed, lyric-matched and searchable. Only the frontend is
-missing — see [`docs/05-PHASE-1-SAAS.md`](../../docs/05-PHASE-1-SAAS.md).
+**Status: Phase 1 complete, and deployable.** Sign in, upload an export, and it
+is parsed, lyric-matched and searchable; the frontend is
+[`apps/web-ui`](../web-ui/). See
+[`docs/05-PHASE-1-SAAS.md`](../../docs/05-PHASE-1-SAAS.md) for what was built and
+[`docs/08-DEPLOYMENT.md`](../../docs/08-DEPLOYMENT.md) for running it on a VPS.
 
-## Running it
+## Running it (development)
 
 Two processes, in two terminals:
 
@@ -22,9 +24,11 @@ The API only ever *enqueues*; the worker is what does the work. Without it,
 uploads sit at `pending` forever — the API says so on startup.
 
 Sign-in links are **printed to the terminal** by `ConsoleMailer` — click one out
-of the log. The server refuses to start with `NODE_ENV=production` until a real
-mailer is wired, because a login system that quietly mails to a log file is worse
-than one that fails to boot.
+of the log. That is a development-only convenience: `mailerFromEnv()` gives
+production an `SmtpMailer` or refuses to start, because a login system that
+quietly mails to a log file is worse than one that fails to boot. Configure it
+with `SMTP_URL` (or `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD`) and `MAIL_FROM` —
+see [`docs/08-DEPLOYMENT.md`](../../docs/08-DEPLOYMENT.md).
 
 ```bash
 curl -X POST localhost:3001/auth/request-link -H 'content-type: application/json' \
@@ -59,7 +63,7 @@ curl -b jar --data-binary @export.zip -H 'content-type: application/zip' \
 ```bash
 npm run db:up      # Postgres 17 in Docker, on port 5433
 npm run migrate    # apply migrations/*.sql
-npm test           # 207 tests against the real database
+npm test           # 227 tests against the real database
 npm run db:down    # stop it (data survives in the volume)
 ```
 

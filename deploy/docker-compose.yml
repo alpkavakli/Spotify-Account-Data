@@ -1,0 +1,136 @@
+# The whole hosted service on one box. Rung 0 of docs/02-SCALABILITY.md.
+#
+#   cp .env.example .env && $EDITOR .env
+#   docker compose up -d --build
+#
+# Full walkthrough — DNS, mail provider, backups, upgrades — in
+# docs/08-DEPLOYMENT.md. Read that before the first deploy; this file is the
+# what, that is the how.
+#
+# Only Caddy publishes a port. Postgres, the API and the frontend are reachable
+# on the private compose network and nowhere else, so the attack surface of the
+# box is 80 and 443 rather than five services that "are only bound to localhost,
+# probably".
+
+name: lyricsearch
+
+# Settings shared by the API and the worker. They are the same image started two
+# different ways: same dependencies, same src/, different entry point.
+#
+# Only `api` carries the `build:` block. Two services building one tag makes
+# buildx write the same image twice and fail; the worker just names the image the
+# API built.
+x-api: &api
+  image: lyricsearch/api
+  restart: unless-stopped
+  # Optional at the compose level so `local-trial.yml` can run without one. A
+  # real deploy that forgets it does not start quietly: POSTGRES_PASSWORD below
+  # is `:?` and the API refuses to boot without BASE_URL and SMTP.
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    NODE_ENV: production
+    # Built here rather than kept in .env so the password exists in exactly one
+    # place and the two cannot drift apart.
+    DATABASE_URL: postgres://lyricsearch:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/lyricsearch
+    BLOB_DIR: /data/blobs
+  volumes:
+    # Shared on purpose: the API writes the uploaded zip, the worker reads it
+    # back to parse. Two separate volumes would give the worker an empty
+    # directory and every upload would fail at "blob not found".
+    - blobs:/data/blobs
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account keys. Losing this volume means
+      # re-issuing certificates, and Let's Encrypt rate-limits that.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - web-ui
+
+  web-ui:
+    build:
+      context: ..
+      dockerfile: apps/web-ui/Dockerfile
+    image: lyricsearch/web-ui
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # Server components call the API directly over the compose network —
+      # they are not browsers and have no reason to go back out through Caddy.
+      API_ORIGIN: http://api:3001
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    <<: *api
+    build:
+      # The repo root, so the @lyricsearch/core workspace is in the build context.
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    # Migrations run here on boot, under an advisory lock (src/migrate.js).
+    healthcheck:
+      # /health does `SELECT 1`, so healthy means "answering AND has a
+      # database", which is what the other services actually depend on.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  worker:
+    <<: *api
+    command: ["node", "src/worker.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Not just ordering: the API owns migrations, and a worker that starts
+      # first would query tables that do not exist yet.
+      api:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lyricsearch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: lyricsearch
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lyricsearch -d lyricsearch"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # No `ports:`. Nothing outside this network needs to reach Postgres, and a
+    # published 5432 is the single most scanned port on a VPS. For a shell,
+    # `docker compose exec postgres psql -U lyricsearch`.
+
+volumes:
+  pgdata:
+  blobs:
+  caddy_data:
+  caddy_config:
