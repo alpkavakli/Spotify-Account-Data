@@ -1492,3 +1492,97 @@ Nothing in code. The public repo does not exist on GitHub yet — create it empt
 clone it, and run the three commands in `09-PUBLISHING.md`. Read `git status`
 before the first publish commit: the tests check the tree the script generates,
 but what becomes public is what you `git add`.
+
+## 2026-07-29 (end of day) — Phase 2 planned, and its one unblocked piece built
+
+With deployment and publishing done, every remaining track was blocked on
+something only the user can do. Phase 2 turned out to be blocked *less* than the
+handoff suggested, so this session took the part that is not.
+
+**`docs/11-PHASE-2-SPOTIFY.md`** is the plan. Three things in it are worth
+knowing even if nobody starts Phase 2 for months.
+
+### Connecting Spotify does not replace the upload
+
+Easy to assume it does. It does not, and the difference is structural: **the Web
+API has no endpoint for listening history.** `recently-played` is a 50-item
+window. Saved tracks, playlists, top items and genres are all available; the play
+counts that make the stats page interesting are not, and never will be.
+
+So Phase 2 is additive — connect for convenience, genres and playlist creation;
+upload for the history. The UI has to say so, or connected users will wonder why
+their stats look thin. (This is also the constraint that makes the lyrical
+summary in `07-FUTURE-FEATURES.md` need polling and a play-events table rather
+than a query.)
+
+### The biggest risk in Phase 2 is not engineering
+
+**Spotify's Developer Terms restrict commercial use, and this product is
+ad-supported.** That has to be read properly — advertising, monetisation,
+attribution — before the extended-quota application is written, and preferably
+before the code. The doc says plainly that nothing in it should be taken as a
+statement of what those terms currently say, because they change and the
+consequence of being wrong is losing API access.
+
+Which is the argument for how Phase 1 was built, restated: if Spotify says no,
+the service still works. Written into the plan as a rule — nothing in Phase 2 may
+become load-bearing for a Phase 1 feature.
+
+### `core` needs no changes, which was the point of Phase 0
+
+`packages/core/src/spotify.js` is stateless: every function takes the credentials
+or token it needs, no storage, no env. `authorizeUrl`, `exchangeCode`,
+`refreshAccessToken`, `getMe`, `searchTrackUri`, `createPlaylist`, `addTracks`
+and the 429 back-off all carry over unchanged. Phase 2 adds a *host*, not a
+client. The genuinely new parts are per-user token storage, refresh
+orchestration, `state` bound to a session, and two pull endpoints.
+
+### Built: token encryption at rest
+
+`apps/web/src/token-crypto.js` + 29 tests. Chosen because it is the one piece of
+Phase 2 that is pure logic — no schema decisions, no database, so it is fully
+verifiable with Docker stopped, which it was.
+
+A Spotify refresh token is a long-lived key to somebody's Spotify account. In the
+hosted service they sit in one table for every user at once, and `backup.sh`
+copies that table off the box nightly. Plaintext, one leaked backup is every
+connected user's account — not their data in our service, their account, on a
+service we do not run.
+
+- **AES-256-GCM**, fresh random 96-bit IV per call.
+- **The user id is the AAD.** A token blob lifted from one row into another fails
+  loudly instead of decrypting into the wrong account — the multi-tenant failure
+  that actually matters.
+- **A keyring, not a key.** `TOKEN_ENCRYPTION_KEYS="2:…,1:…"`; the first
+  encrypts, the rest still decrypt. Rotation becomes "prepend a key, redeploy"
+  instead of a re-encrypt migration run under pressure, and `needsRotation()`
+  says which rows are still on the old key. Retiring a key too early gets a
+  message naming the key id, because that failure is recoverable by putting it
+  back.
+- **No default, and no development fallback.** Deliberately unlike the mailer.
+  Every other fallback here degrades to something visibly wrong — the console
+  mailer prints instead of sending. A default encryption key degrades to
+  something indistinguishable from working, and would end up being the key in
+  production.
+
+The tests assert properties rather than round-tripping: that the ciphertext does
+not contain the plaintext or any 24-character slice of it, that twenty
+encryptions of one token produce twenty distinct strings (a deterministic
+ciphertext leaks which rows hold the same credential), that a flipped bit, a
+swapped tag and a swapped IV are all caught, that the version field is really
+checked, and that `openssl rand -hex 32` instead of `-base64` is rejected as the
+wrong length rather than accepted as a weak key. A test that only checks
+encrypt-then-decrypt would pass on base64.
+
+**No migration was written.** Migrations are immutable once applied, so `002`
+lands with the code that uses it. The schema is in the doc as a design.
+
+### Counts
+
+**588 tests** (core 163, personal 114, web 256, web-ui 37, tools 18), +29.
+
+Verified this session with Docker stopped: 369 of them. The 219 Postgres-backed
+tests skip rather than fail, and were last green earlier today. Nothing since
+touched them — the changes are new files plus comment-only edits in `core`, whose
+own 163 pass. `04-TESTING.md` now warns to read the numbers rather than the
+colour, because a green run without Docker is a much smaller run.

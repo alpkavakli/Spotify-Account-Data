@@ -45,9 +45,13 @@ built-in `fetch`.
 | **Config** | `apps/web/test/mailer.test.js`, `apps/web-ui/test/deploy-routes.test.js` | That production is configured the way the tests assume: which mailer it gets, and that Caddy proxies what `next.config.mjs` proxies. No I/O at all. | ~200 ms |
 | **Publishing** | `tools/publish.test.js` | That no commercial file, and no reference to one, can reach the public OSS repo — by path, by content, and by what the generated tree resolves against. See `09-PUBLISHING.md`. | ~300 ms |
 
-559 tests: core 163, personal 114, web 227, web-ui 37, tools 18. The first three
+588 tests: core 163, personal 114, web 256, web-ui 37, tools 18. The first three
 run in about five seconds and are meant to be run constantly; the web ones need
 Docker and take about twenty.
+
+Not every test in `apps/web` needs Postgres — `mailer.test.js` and
+`token-crypto.test.js` are pure — so a run without Docker is green but much
+smaller. Watch the numbers, not just the colour.
 
 Layers 4 and 5 are described below in **Layer 4** and **Layer 5** — they arrived
 with the hosted service and have techniques of their own.

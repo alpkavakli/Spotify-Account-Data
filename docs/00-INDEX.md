@@ -18,6 +18,7 @@ without re-deriving anything.
 | 07 | [07-FUTURE-FEATURES.md](07-FUTURE-FEATURES.md) | Designed but **not scheduled**. Currently: the weekly/monthly lyrical summary (embeddings, time-weighted mean, ML). Read it before starting one of them, not before Phase 1. |
 | 08 | [08-DEPLOYMENT.md](08-DEPLOYMENT.md) | Running the hosted service on a VPS: Docker Compose, Caddy, the mail provider, backups, upgrades. What `deploy/` is. |
 | 09 | [09-PUBLISHING.md](09-PUBLISHING.md) | Generating the public OSS Personal Edition out of this private repo: the allowlist, the AGPL licence, and what keeps commercial code out. What `tools/` is. |
+| 11 | [11-PHASE-2-SPOTIFY.md](11-PHASE-2-SPOTIFY.md) | The plan for per-user Spotify connect: prerequisites (a registered app, extended quota, **and a read of the Developer Terms**), what the API can and cannot give, token encryption, step sequence. **Not started, blocked on a user action.** |
 | 10 | [10-WORKLOG.md](10-WORKLOG.md) | Running, append-only log of what we actually did, step by step, with results. |
 
 **Reading order for a new agent:** `PROJECT_PLAN.md` → `01` → `02` → `03` → `04` → `05` → `06` → `10`
